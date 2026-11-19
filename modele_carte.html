@@ -712,7 +712,8 @@ function histoBoue(c, jourSortie) {
     <div class="hb">${jours.map(col).join('')}</div>
     <div class="hb hb-bas">${jours.map(j => `<div class="hb-jour">${j.lab}<br>${j.num}</div>`).join('')}</div>
     <div class="hb-leg">${Object.entries(COUL_SOURCE).map(([k, v]) => `<span><i style="background:${v}"></i>${k}</span>`).join('')}</div>
-    <div class="petit">Plus le bâton est pâle, moins le jour compte : le poids est divisé par 2 tous les 3 jours. Total pondéré : <b>${fmt(c.boue, 1)} mm</b>.</div>`;
+    <div class="petit"><b>Total : ${fmt(jours.reduce((t, j) => t + (j.v || 0), 0), 1)} mm</b> (${c.detail.length} jours${c.avantDepart !== null && c.avantDepart !== undefined ? ' + le matin de la sortie' : ''}).
+      Plus le bâton est pâle, moins le jour compte dans le classement (le poids est divisé par 2 tous les 3 jours).</div>`;
 }
 function ouvrirStation(s, ll) {
   const fin = dCompact(P.jours[P.jours.length - 1]);
