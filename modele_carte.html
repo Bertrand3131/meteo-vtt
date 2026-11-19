@@ -321,6 +321,25 @@ function majBadge() {
   document.getElementById('badgeMaj').innerHTML = `<span class="pastille" style="background:${couleur}"></span>Mise à jour : ${fmtJour(g, true)} à ${D.genere.slice(11, 16)}<span class="age">(${age})</span>`;
 }
 majBadge(); setInterval(majBadge, 60000);
+// carte en ligne : si une version plus récente a été publiée, on recharge la page toute seule
+// (à l'ouverture, au retour sur l'appli, et toutes les 15 minutes)
+async function verifierVersion() {
+  if (!location.protocol.startsWith('http')) return;
+  try {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const v = await r.json();
+    let deja = null; try { deja = sessionStorage.getItem('meteoVTTrecharge'); } catch (e) {}
+    if (v.genere && v.genere > D.genere && deja !== v.genere) {   // une seule tentative par version (évite une boucle)
+      try { sessionStorage.setItem('meteoVTTrecharge', v.genere); } catch (e) {}
+      document.getElementById('badgeMaj').innerHTML = '<span class="pastille" style="background:#2f7fd0"></span>Nouvelles données, chargement…';
+      location.reload();
+    }
+  } catch (e) {}
+}
+verifierVersion();
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') verifierVersion(); });
+setInterval(verifierVersion, 15 * 60000);
 // téléphone : bouton qui ouvre / ferme le panneau des réglages
 (function () {
   const b = document.getElementById('boutonPanneau'), pan = document.getElementById('panneau');

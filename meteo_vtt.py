@@ -496,6 +496,9 @@ def ecrire_carte(donnees):
     with open(tmp, "w", encoding="utf-8") as f:
         f.write(html)
     os.replace(tmp, SORTIE_HTML)
+    # petit fichier « version » : la carte ouverte le consulte pour se recharger toute seule
+    with open(os.path.join(os.path.dirname(os.path.abspath(SORTIE_HTML)), "version.json"), "w", encoding="utf-8") as f:
+        json.dump({"genere": donnees["genere"]}, f)
     info("     Carte écrite : %s (%.1f Mo)" % (SORTIE_HTML, os.path.getsize(SORTIE_HTML) / 1e6))
     # copie pour le téléphone dans OneDrive (si OneDrive est installé sur ce PC)
     if COPIE_ONEDRIVE and not EN_LIGNE:
