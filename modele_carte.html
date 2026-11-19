@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Météo VTT</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1e262e">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone-192.png">
+<link rel="apple-touch-icon" href="icone-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px/1.35 "Segoe UI", system-ui, sans-serif; color: #1d2329; }
+  #app { display: flex; height: 100%; }
+  #panneau { width: 330px; flex: none; overflow-y: auto; background: #f7f7f5; border-right: 1px solid #d9d9d4; padding: 14px 16px 20px; box-sizing: border-box; }
+  #carte { flex: 1; }
+  h1 { font-size: 19px; margin: 0 0 2px; }
+  .maj { color: #5b6670; font-size: 12.5px; margin-bottom: 10px; }
+  .alerte { background: #fff1d6; border: 1px solid #e7b453; border-radius: 6px; padding: 7px 9px; margin: 8px 0; font-size: 12.5px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: #4b5560; margin: 16px 0 6px; }
+  .groupe { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+  .groupe button { border: 1px solid #c9ccc8; background: #fff; border-radius: 6px; padding: 5px 8px; font: inherit; font-size: 13px; cursor: pointer; color: #1d2329; }
+  .groupe button:hover { border-color: #8c949b; }
+  .groupe button.actif { background: #1f4e79; border-color: #1f4e79; color: #fff; }
+  .groupe button.samedi:not(.actif) { border-color: #1f4e79; font-weight: 600; }
+  .groupe button:disabled { opacity: .4; cursor: default; }
+  h2 .ico { display: inline-block; vertical-align: -2px; margin-left: 6px; }
+  .ico-point { width: 11px; height: 11px; border-radius: 50%; background: #a06a2c; border: 1.5px solid #3b2410; }
+  .ico-carre { width: 18px; height: 13px; background: linear-gradient(90deg, #a6d3f2 50%, #2f7fd0 50%); opacity: .8; }
+  .zone { background: #eef3f8; border-radius: 6px; padding: 6px 8px; margin: 2px 0 8px; }
+  .petitBouton { border: 1px solid #c9ccc8; background: #fff; border-radius: 5px; padding: 3px 8px; font: inherit; cursor: pointer; }
+  .note { font-size: 12px; color: #5b6670; margin: 2px 0 4px; }
+  .legende { margin: 6px 0 2px; }
+  .legende .barre { display: flex; height: 12px; border-radius: 3px; overflow: hidden; border: 1px solid #c9ccc8; }
+  .legende .barre span { flex: 1; }
+  .legende .graduations { display: flex; font-size: 11px; color: #4b5560; }
+  .legende .graduations span { flex: 1; }
+  .legende .titre { font-size: 12px; color: #4b5560; margin-bottom: 3px; }
+  .pied { font-size: 11.5px; color: #6b757e; margin-top: 18px; border-top: 1px solid #ddd; padding-top: 8px; }
+  .pied a { color: #1f4e79; }
+  .etiquette { background: none; border: none; box-shadow: none; font: 600 11px "Segoe UI", sans-serif; color: #111; text-shadow: 0 0 2px #fff, 0 0 2px #fff, 0 0 3px #fff; white-space: nowrap; pointer-events: none; }
+  .etiquette.station { color: #3b2410; }
+  .leaflet-popup-content { margin: 10px 12px; font-size: 13px; min-width: 260px; }
+  .leaflet-popup-content h3 { font-size: 14px; margin: 0 0 4px; }
+  .leaflet-popup-content table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  .leaflet-popup-content th, .leaflet-popup-content td { padding: 2px 4px; text-align: right; border-bottom: 1px solid #eee; }
+  .leaflet-popup-content th:first-child, .leaflet-popup-content td:first-child { text-align: left; }
+  .leaflet-popup-content .petit { font-size: 11.5px; color: #5b6670; }
+  .leaflet-popup-content .cumuls { display: flex; gap: 10px; margin: 4px 0 6px; }
+  .leaflet-popup-content .cumuls div { background: #f3efe8; border-radius: 5px; padding: 3px 7px; }
+  .leaflet-popup-content .cumuls b { font-size: 15px; }
+  .ecart { color: #a05a00; font-weight: 600; }
+  /* barre des jours en bas de la carte, façon Meteoblue */
+  #barreJours { position: absolute; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 1000; display: flex; gap: 0;
+    background: rgba(30, 38, 46, .88); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+  #barreJours button { border: none; background: none; color: #e8edf2; font: 600 13.5px "Segoe UI", sans-serif; padding: 9px 16px; cursor: pointer; border-right: 1px solid rgba(255,255,255,.12); }
+  #barreJours button:last-child { border-right: none; }
+  #barreJours button:hover { background: rgba(255,255,255,.12); }
+  #barreJours button.actif { background: #2f7fd0; color: #fff; }
+  #barreJours button.samedi:not(.actif) { color: #ffd54a; }
+  #barreJours button .sous { display: block; font-weight: 400; font-size: 11px; opacity: .8; }
+  /* légende verticale à gauche */
+  #legVert { position: absolute; left: 10px; top: 90px; z-index: 1000; background: rgba(255,255,255,.9); border-radius: 6px; padding: 6px 6px 6px 4px;
+    box-shadow: 0 1px 5px rgba(0,0,0,.2); font: 11px "Segoe UI", sans-serif; color: #2b333b; display: flex; gap: 4px; }
+  #legVert .degrade { width: 14px; border-radius: 3px; border: 1px solid #c9ccc8; }
+  #legVert .graduations { position: relative; width: 30px; }
+  #legVert .graduations span { position: absolute; left: 0; transform: translateY(50%); white-space: nowrap; }
+  #legVert .unite { writing-mode: vertical-rl; transform: rotate(180deg); font-weight: 600; text-align: center; }
+  /* valeur sous la souris */
+  #survol { position: absolute; z-index: 1001; pointer-events: none; background: #1e262e; color: #fff; font: 600 12.5px "Segoe UI", sans-serif;
+    padding: 3px 7px; border-radius: 4px; white-space: nowrap; display: none; }
+  #barreHeures { position: absolute; left: 50%; transform: translateX(-50%); bottom: 76px; z-index: 1000; display: none; align-items: center; gap: 8px;
+    background: rgba(30, 38, 46, .88); color: #e8edf2; border-radius: 8px; padding: 6px 10px; box-shadow: 0 2px 8px rgba(0,0,0,.25); font: 13px "Segoe UI", sans-serif; }
+  #barreHeures button { border: none; background: rgba(255,255,255,.12); color: #fff; border-radius: 5px; width: 28px; height: 26px; cursor: pointer; font-size: 13px; }
+  #barreHeures button:hover { background: rgba(255,255,255,.25); }
+  #barreHeures input { width: 380px; accent-color: #2f7fd0; }
+  #barreHeures .heure { font-weight: 700; font-size: 15px; min-width: 48px; text-align: center; background: #2f7fd0; border-radius: 5px; padding: 2px 6px; }
+  #barreHeures .detail { font-size: 11.5px; opacity: .8; min-width: 120px; }
+  .horaire td { text-align: center !important; padding: 2px 1px !important; font-size: 11px; }
+  .horaire th { text-align: center !important; font-weight: 400; color: #5b6670; font-size: 10.5px; padding: 1px !important; }
+  .fleche { pointer-events: none; }
+  .fleche svg { display: block; }
+  #boutonPanneau { display: none; }
+  /* date de mise à jour, toujours visible sur la carte */
+  #badgeMaj { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(30,38,46,.88); color: #fff;
+    font: 600 13px "Segoe UI", sans-serif; padding: 6px 12px; border-radius: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.25); white-space: nowrap; pointer-events: none; }
+  #badgeMaj .pastille { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
+  #badgeMaj .age { font-weight: 400; opacity: .8; margin-left: 4px; }
+  /* ---------------- version téléphone (écran étroit) ---------------- */
+  @media (max-width: 820px) {
+    #app { display: block; position: relative; }
+    #carte { position: absolute; inset: 0; }
+    #panneau { position: fixed; left: 0; right: 0; bottom: 0; width: auto; max-height: 62vh; z-index: 2000; border-right: none;
+      border-top: 1px solid #c9ccc8; border-radius: 14px 14px 0 0; box-shadow: 0 -4px 16px rgba(0,0,0,.2);
+      transform: translateY(105%); transition: transform .25s; padding: 10px 14px 24px; font-size: 15px; }
+    #panneau.ouvert { transform: none; }
+    #panneau .groupe button { padding: 8px 11px; font-size: 14.5px; }
+    #panneau .pied { display: none; }
+    #badgeMaj { top: 64px; font-size: 12px; padding: 5px 10px; }
+    #boutonPanneau { display: block; position: absolute; top: 10px; left: 56px; z-index: 1000; background: #1e262e; color: #fff; border: none;
+      border-radius: 8px; padding: 9px 13px; font: 600 14px "Segoe UI", sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+    #barreJours { bottom: 8px; max-width: 96vw; overflow-x: auto; }
+    #barreJours button { padding: 7px 9px; font-size: 12.5px; }
+    #barreHeures { bottom: 60px; padding: 5px 7px; gap: 5px; max-width: 96vw; }
+    #barreHeures input { width: 38vw; }
+    #barreHeures .detail { display: none; }
+    #barreHeures button { width: 34px; height: 32px; }
+    #legVert { top: 92px; transform: scale(.72); transform-origin: top left; }
+    .popup-ouverte #legVert { display: none !important; }
+    .leaflet-popup-content { max-width: 84vw; overflow-x: auto; font-size: 12px; }
+    #survol { display: none !important; }
+    .leaflet-control-layers-expanded { font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panneau">
+    <h1>Météo VTT</h1>
+    <div class="maj" id="maj"></div>
+    <div id="alertes"></div>
+
+    <h2>Points : pluie tombée (mesurée) <span class="ico ico-point" title="Sur la carte : un point par station"></span></h2>
+    <div class="groupe" id="choixPluie"></div>
+    <div class="note" id="notePluie"></div>
+    <div class="legende" id="legPluie"></div>
+
+    <h2>Fond de carte : prévision <span class="ico ico-carre" title="Sur la carte : des carrés de couleur d'environ 28 km"></span></h2>
+    <div class="groupe" id="choixVar"></div>
+    <div class="groupe" id="choixModele"></div>
+    <div class="note" id="notePrev"></div>
+    <div id="reglagesOu" style="display:none;font-size:12.5px;margin:4px 0 6px">
+      <div class="zone">
+        <label><input type="checkbox" id="zoneActive"> <b>Limiter à ma zone</b></label>
+        <div id="zoneReglages">
+          <div style="margin:4px 0"><input id="zoneVille" placeholder="Ville de départ" style="width:150px;padding:3px 5px"> <button id="zoneChercher" class="petitBouton">Chercher</button></div>
+          <div>Trajet en voiture max : <select id="zoneTemps"></select></div>
+          <div class="note" id="zoneEtat"></div>
+        </div>
+      </div>
+      <div style="margin-bottom:6px"><b>Je roule de</b> <select id="sortieDebut"></select> à <select id="sortieFin"></select></div>
+      <div style="margin-bottom:3px;color:#4b5560">Importance de chaque critère :</div>
+      <div><label style="display:inline-block;width:142px">Boue (pluie passée)</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsBoue"> <span id="vBoue"></span></div>
+      <div><label style="display:inline-block;width:142px">Pluie pendant la sortie</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsPluie"> <span id="vPluie"></span></div>
+      <div><label style="display:inline-block;width:142px">Vent et rafales</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsVent"> <span id="vVent"></span></div>
+    </div>
+
+    <div class="pied">
+      Le jour se choisit dans la barre en bas de la carte. Passe la souris sur la carte pour lire la valeur ; clique n'importe où pour voir les prévisions jour par jour des deux modèles et la pluie de la station la plus proche.<br><br>
+      Pluie mesurée : stations Météo-France, données quotidiennes publiques (data.gouv.fr). Prévisions : <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (modèles Météo-France et ECMWF). Fond : Esri, OpenTopoMap, CyclOSM, IGN (données © OpenStreetMap).<br>
+      Pour comparer : <a href="https://www.meteociel.fr/climatologie/climato.php" target="_blank">Meteociel climato</a>
+    </div>
+  </div>
+  <div id="carte"></div>
+</div>
+
+<script>
+const D = /*__DONNEES__*/null;
+if (!D) {
+  document.getElementById('app').innerHTML = '<div style="max-width:620px;margin:60px auto;font-size:16px;line-height:1.5">' +
+    '<h1>Ce fichier n\'est que le modèle de la carte</h1>' +
+    '<p>Pour obtenir la carte, ferme cette page et <b>double-clique sur « Mettre a jour la carte.bat »</b> dans le dossier « Meteo vtt ».</p>' +
+    '<p>Une fenêtre noire s\'ouvre et télécharge les données (une à trois minutes). La carte « Carte meteo VTT.html » s\'ouvre ensuite toute seule.</p></div>';
+  throw new Error('modèle sans données');
+}
+
+// ------------------------------------------------------------------ palettes
+const PAL = {
+  // pluie tombée : beige (sec) -> brun -> presque noir (très arrosé)
+  passee: { seuils: [0, 1, 5, 10, 20, 35, 60, 100], couleurs: ['#ffffff', '#f3e7c9', '#e2c58b', '#c99a52', '#a06a2c', '#764418', '#4b2a10', '#24140a'], unite: 'mm' },
+  // palettes des prévisions inspirées de Meteoblue
+  pluie:  { seuils: [0, 0.25, 0.5, 1, 1.5, 2, 3, 5, 7, 10, 15, 20, 25, 30],
+            couleurs: [null, '#a6f5f5', '#7fe6f2', '#91b4ff', '#7b8ff5', '#5577f0', '#3557d6', '#2ea84b', '#86cc3a', '#ece23a', '#f5b532', '#f0832e', '#e5502e', '#cf2828'], unite: 'mm' },
+  vent:   { seuils: [0, 2, 4, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 50, 60, 70, 80, 100],
+            couleurs: ['#9b7fd1', '#7a6ad6', '#5468db', '#3f8fe0', '#33b5dc', '#2fbfb5', '#34b38c', '#3fa860', '#72bf4a', '#a8d24a', '#e2df4a', '#f2cd4a', '#f5b143', '#f08c38', '#e4632e', '#d23c3c', '#c42f74', '#9c2a9e'], unite: 'km/h' },
+  soleil: { seuils: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+            couleurs: ['#7d858c', '#9a9e9a', '#b6b49a', '#d0c88f', '#e3d77b', '#efdd5f', '#f5d743', '#f7c92c', '#f5b51c', '#ef9d0e'], unite: 'h' },
+  temp:   { seuils: [-10, -5, 0, 5, 10, 15, 20, 25, 30, 35],
+            couleurs: ['#7a3fb8', '#4a4fc4', '#3b86d6', '#3dbbd0', '#4fbf7a', '#a9d24a', '#ece23a', '#f5a832', '#e8592e', '#c42828'], unite: '°C' },
+  ou:     { seuils: [0, 10, 25, 40, 50, 60, 75, 90, 100],
+            couleurs: ['#b2182b', '#d6604d', '#f4a582', '#f7d08a', '#f2ef9a', '#c7e58b', '#7fc97f', '#3a9d4f', '#1b7837'], unite: '%' },
+  ecart:  { seuils: [0, 1, 2, 4, 6, 10, 15, 25], couleurs: [null, '#eeeeee', '#d9d9d9', '#bdbdbd', '#999999', '#737373', '#4d4d4d', '#262626'], unite: '' },
+};
+function couleur(pal, v) {
+  if (v === null || v === undefined || isNaN(v)) return null;
+  let c = pal.couleurs[0];
+  for (let i = 0; i < pal.seuils.length; i++) if (v >= pal.seuils[i]) c = pal.couleurs[i];
+  return c;
+}
+function hexRgb(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+// couleur en dégradé continu entre les paliers : [r, g, b, alpha 0-1]
+function couleurContinue(pal, v) {
+  const S = pal.seuils, C = pal.couleurs;
+  if (v <= S[0]) return C[0] ? [...hexRgb(C[0]), 1] : [255, 255, 255, 0];
+  for (let i = 0; i < S.length - 1; i++) {
+    if (v < S[i + 1]) {
+      const t = (v - S[i]) / (S[i + 1] - S[i]);
+      const b = hexRgb(C[i + 1]);
+      if (!C[i]) return [...b, t];               // palier transparent : fondu progressif
+      const a = hexRgb(C[i]);
+      return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, 1];
+    }
+  }
+  return [...hexRgb(C[C.length - 1]), 1];
+}
+function legende(el, pal, titre) {
+  el.innerHTML = `<div class="titre">${titre}</div><div class="barre">${pal.couleurs.map(c => `<span style="background:${c || 'repeating-linear-gradient(45deg,#fff 0 3px,#e4e4e4 3px 6px)'}"></span>`).join('')}</div>` +
+    `<div class="graduations">${pal.seuils.map(s => `<span>${s}</span>`).join('')}</div>`;
+}
+
+// ------------------------------------------------------------------ dates
+const JOURS_SEM = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
+function dIso(s) { return new Date(s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10)); }
+function dCompact(s) { return new Date(s.slice(0, 4), +s.slice(4, 6) - 1, +s.slice(6, 8)); }
+function fmtJour(d, long) { return JOURS_SEM[d.getDay()] + ' ' + d.getDate() + (long ? '/' + String(d.getMonth() + 1).padStart(2, '0') : ''); }
+const fmt = (v, dec = 0) => (v === null || v === undefined) ? '—' : (dec ? v.toFixed(dec).replace('.', ',') : String(Math.round(v)));
+
+// ------------------------------------------------------------------ état
+const VARS = [
+  { id: 0, nom: 'Pluie', aide: 'pluie prévue heure par heure (mm tombés en 1 h)', pal: 'pluie', dec: 1, ecart: 2, horaire: 3 },
+  { id: 2, nom: 'Vent', aide: 'vent moyen à 10 m, heure par heure', horaire: 4, pal: 'vent', dec: 0, ecart: 10 },
+  { id: 3, nom: 'Rafales', aide: 'rafales heure par heure', horaire: 5, pal: 'vent', dec: 0, ecart: 15 },
+  { id: 4, nom: 'Soleil', aide: 'heures de soleil entre 8 h et 18 h', pal: 'soleil', dec: 1, ecart: 2 },
+  { id: 9, nom: 'Où rouler ?', aide: 'classement relatif', pal: 'ou', dec: 0, special: true },
+  { id: 5, nom: 'T° max', aide: 'température la plus haute entre 8 h et 18 h', pal: 'temp', dec: 0, ecart: 3 },
+];
+const etat = { nPluie: 10, jour: 0, variable: 0, modele: 0, heure: 13 };
+try { Object.assign(etat, JSON.parse(localStorage.getItem('meteoVTT') || '{}')); } catch (e) {}
+if (!VARS.some(v => v.id === etat.variable)) etat.variable = 0;
+const varCourante = () => VARS.find(v => v.id === etat.variable);
+function sauver() { try { localStorage.setItem('meteoVTT', JSON.stringify({ nPluie: etat.nPluie, variable: etat.variable, modele: etat.modele, heure: etat.heure, v2: 1 })); } catch (e) {} }
+
+const P = D && D.pluie, F = D && D.prevision;
+
+// jour par défaut : le prochain samedi s'il est dans la prévision, sinon demain
+if (F) {
+  const iSam = F.jours.findIndex(j => dIso(j).getDay() === 6);
+  etat.jour = iSam >= 0 ? iSam : Math.min(1, F.jours.length - 1);
+}
+const AUTO = 99;   // Météo-France (AROME) pour aujourd'hui et demain, ECMWF au-delà
+try { if (!JSON.parse(localStorage.getItem('meteoVTT') || '{}').v2) etat.modele = AUTO; } catch (e) { etat.modele = AUTO; }
+if (F && etat.modele !== AUTO && (etat.modele > F.modeles.length || etat.modele < -1)) etat.modele = AUTO;
+const iMF = F ? F.modeles.indexOf('Météo-France') : -1;
+function modeleDuJour(k) {
+  const iE = Math.max(0, F.modeles.indexOf('ECMWF'));
+  if (iMF >= 0 && k <= 1) {
+    const ok = F.points.some(p => p[2][k] && p[2][k][iMF] && p[2][k][iMF][0] !== null);
+    if (ok) return iMF;
+  }
+  return iE;
+}
+function nomModele() { const m = F.modeles[varCourante().special ? modeleDuJour(etat.jour) : mSel()]; return etat.modele === AUTO || varCourante().special ? `${m} (auto : Météo-France aujourd'hui et demain, ECMWF ensuite)` : m; }
+function mSel() { return etat.modele === AUTO ? modeleDuJour(etat.jour) : etat.modele; }
+
+// ------------------------------------------------------------------ en-tête
+(function () {
+  const g = new Date(D.genere);
+  const age = (Date.now() - g) / 3600e3;
+  let t = 'Données récupérées le ' + fmtJour(g, true) + ' à ' + D.genere.slice(11, 16);
+  document.getElementById('maj').textContent = t;
+  const al = document.getElementById('alertes');
+  const msgs = [...(D.alertes || [])];
+  if (age > 6) msgs.unshift('Ces données ont plus de ' + Math.floor(age) + ' h. Relance « Mettre a jour la carte » pour les rafraîchir.');
+  if (P && P.erreurs && P.erreurs.length) msgs.push('Départements sans données : ' + P.erreurs.join(', '));
+  al.innerHTML = msgs.map(m => `<div class="alerte">${m}</div>`).join('');
+})();
+
+// ------------------------------------------------------------------ carte
+const carte = L.map('carte', { preferCanvas: true, zoomControl: true }).setView([46.6, 2.4], window.innerWidth <= 820 ? 5 : 6);
+// Le serveur standard d'OpenStreetMap refuse les cartes ouvertes depuis un fichier local (403)
+// et CARTO exige une clé : on reprend les fonds qui marchent déjà sur la carte Garmin.
+const fonds = {
+  'Gris clair (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 16, attribution: 'Tiles © Esri' }),
+  'Relief (OpenTopoMap)': L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+    maxZoom: 17, attribution: '© OpenStreetMap, SRTM, © OpenTopoMap' }),
+  'VTT (CyclOSM)': L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
+    maxZoom: 18, attribution: '© OpenStreetMap, CyclOSM' }),
+  'Plan (Esri)': L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 18, attribution: 'Tiles © Esri' }),
+  'Plan IGN': L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', {
+    maxZoom: 18, attribution: '© IGN' }),
+};
+let nomFond = 'Gris clair (Esri)';
+try { if (fonds[localStorage.getItem('meteoVTTfond')]) nomFond = localStorage.getItem('meteoVTTfond'); } catch (e) {}
+fonds[nomFond].addTo(carte);
+L.control.layers(fonds, null, { position: 'topright', collapsed: window.innerWidth <= 820 }).addTo(carte);
+carte.on('baselayerchange', e => { try { localStorage.setItem('meteoVTTfond', e.name); } catch (x) {} });
+// noms des villes par-dessus les couleurs (avec le fond gris clair)
+carte.createPane('nomsVilles'); carte.getPane('nomsVilles').style.zIndex = 450; carte.getPane('nomsVilles').style.pointerEvents = 'none';
+const nomsVilles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+  pane: 'nomsVilles', maxZoom: 16, attribution: '' });
+function majNomsVilles(nom) { if (nom === 'Gris clair (Esri)') nomsVilles.addTo(carte); else carte.removeLayer(nomsVilles); }
+majNomsVilles(nomFond);
+carte.on('baselayerchange', e => majNomsVilles(e.name));
+['barreJours', 'barreHeures', 'legVert', 'survol', 'boutonPanneau', 'badgeMaj'].forEach(id => {
+  const d = document.createElement('div'); d.id = id; carte.getContainer().appendChild(d);
+  L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d);
+  // un clic sur la barre des jours ne doit jamais ouvrir la fenêtre de prévision
+  L.DomEvent.on(d, 'click mousedown mouseup pointerdown pointerup', L.DomEvent.stopPropagation);
+  L.DomEvent.on(d, 'mousemove', ev => { L.DomEvent.stopPropagation(ev); document.getElementById('survol').style.display = 'none'; });
+});
+const rendu = L.canvas({ padding: 0.3 });
+const coucheFleches = L.layerGroup().addTo(carte);
+// badge « mis à jour il y a … », rafraîchi chaque minute
+function majBadge() {
+  const g = new Date(D.genere), min = Math.max(0, Math.round((Date.now() - g) / 60000));
+  const age = min < 60 ? `il y a ${min} min` : min < 48 * 60 ? `il y a ${Math.floor(min / 60)} h${min % 60 && min < 600 ? ' ' + String(min % 60).padStart(2, '0') : ''}` : `il y a ${Math.floor(min / 1440)} jours`;
+  const couleur = min <= 7 * 60 ? '#4caf50' : min <= 13 * 60 ? '#f5b142' : '#e5502e';
+  document.getElementById('badgeMaj').innerHTML = `<span class="pastille" style="background:${couleur}"></span>Mise à jour : ${fmtJour(g, true)} à ${D.genere.slice(11, 16)}<span class="age">(${age})</span>`;
+}
+majBadge(); setInterval(majBadge, 60000);
+// téléphone : bouton qui ouvre / ferme le panneau des réglages
+(function () {
+  const b = document.getElementById('boutonPanneau'), pan = document.getElementById('panneau');
+  b.textContent = '☰ Réglages';
+  b.onclick = ev => { L.DomEvent.stop(ev); pan.classList.toggle('ouvert'); b.textContent = pan.classList.contains('ouvert') ? '✕ Fermer' : '☰ Réglages'; };
+  carte.on('click', () => { if (pan.classList.contains('ouvert')) { pan.classList.remove('ouvert'); b.textContent = '☰ Réglages'; } });
+})();
+const coucheGrille = L.layerGroup().addTo(carte);
+const coucheStations = L.layerGroup().addTo(carte);
+const coucheEtiquettes = L.layerGroup().addTo(carte);
+
+// cumuls des stations
+function cumul(valeurs, n) {
+  const v = valeurs.slice(-n);
+  const ok = v.filter(x => x !== null);
+  return { somme: ok.length ? ok.reduce((a, b) => a + b, 0) : null, manque: v.length - ok.length };
+}
+
+// ------------------------------------------------------------------ dessin : prévision
+let cellules = [];
+function valeurBrute(pt, m) {
+  if (varCourante().horaire) {
+    const h = pt[varCourante().horaire] && pt[varCourante().horaire][m];
+    return h ? h[etat.jour * 24 + etat.heure] : null;
+  }
+  const j = pt[2][etat.jour];
+  return j && j[m] ? j[m][etat.variable] : null;
+}
+function valeurCellule(pt) {
+  if (varCourante().special) return ou ? ou.score[pt.__i] : null;
+  if (mSel() < F.modeles.length) return valeurBrute(pt, mSel());
+  const a = valeurBrute(pt, 0), b = valeurBrute(pt, 1);
+  return (a === null || b === null || a === undefined || b === undefined) ? null : Math.abs(a - b);
+}
+// ------------------------------------------------------------------ « Où rouler ? » : classement relatif
+const POIDS = { boue: 40, pluie: 35, vent: 25 };
+const SORTIE = { debut: 8, fin: 18 };   // tranche horaire de la sortie, réglable
+try { Object.assign(SORTIE, JSON.parse(localStorage.getItem('meteoVTTsortie') || '{}')); } catch (e) {}
+try { Object.assign(POIDS, JSON.parse(localStorage.getItem('meteoVTTpoids') || '{}')); } catch (e) {}
+const iECMWF = F ? Math.max(0, F.modeles.indexOf('ECMWF')) : 0;
+const isoVersCompact = s => s.replace(/-/g, '');
+const jourNum = s => { const c = isoVersCompact(s); return Date.UTC(+c.slice(0, 4), +c.slice(4, 6) - 1, +c.slice(6, 8)) / 864e5; };
+// pluie mesurée estimée à chaque point de grille (moyenne des stations proches, pondérée par la distance)
+const pluieMesureeGrille = (P && F) ? F.points.map(pt => {
+  const cl = Math.cos(pt[0] * Math.PI / 180), proches = [];
+  for (const s of P.stations) {
+    const d = Math.hypot((s[2] - pt[0]) * 111, (s[3] - pt[1]) * 111 * cl);
+    if (d < 60) proches.push([d, s[6]]);
+  }
+  proches.sort((a, b) => a[0] - b[0]);
+  const garde = proches.slice(0, 6);
+  return P.jours.map((j, k) => {
+    let sv = 0, sw = 0;
+    for (const [d, v] of garde) if (v[k] !== null) { const w = 1 / Math.pow(d + 3, 2); sv += v[k] * w; sw += w; }
+    return sw ? sv / sw : null;
+  });
+}) : null;
+const dernierMesure = P ? jourNum(P.jours[P.jours.length - 1]) : -Infinity;
+// détail des critères pour un point et le jour choisi (modèle ECMWF)
+function criteresOu(n) {
+  const pt = F.points[n], S = jourNum(F.jours[etat.jour]), m = modeleDuJour(etat.jour);
+  let boue = 0, detail = [];
+  for (let a = 1; a <= 10; a++) {
+    const x = S - a, w = Math.pow(0.5, (a - 1) / 3);
+    let v = null, src = '';
+    if (x <= dernierMesure && pluieMesureeGrille) {
+      const k = P.jours.findIndex(j => jourNum(j) === x);
+      if (k >= 0) { v = pluieMesureeGrille[n][k]; src = 'mesurée'; }
+    }
+    if (v === null && F.jours_passes && pt[7]) {
+      const k = F.jours_passes.findIndex(j => jourNum(j) === x);
+      const mp = iMF >= 0 ? iMF : iECMWF;   // jours passés : modèle le plus fin
+      if (k >= 0 && pt[7][mp]) { v = pt[7][mp][k]; src = 'modèle'; }
+      if ((v === null || v === undefined) && k >= 0 && pt[7][iECMWF]) { v = pt[7][iECMWF][k]; src = 'modèle'; }
+    }
+    if (v === null) {
+      const k = F.jours.findIndex(j => jourNum(j) === x);
+      const mk = k >= 0 ? modeleDuJour(k) : m;
+      if (k >= 0 && pt[2][k] && pt[2][k][mk]) { v = pt[2][k][mk][1]; src = 'prévue'; }
+    }
+    if (v !== null && v !== undefined) { boue += w * v; detail.push([x, v, src]); }
+  }
+  // le jour de la sortie : chaque valeur horaire « h » = pluie tombée de h-1 à h
+  const { debut, fin } = SORTIE, base = etat.jour * 24;
+  const serie = (k) => pt[k] && pt[k][m] ? pt[k][m] : null;
+  const sP = serie(3), sV = serie(4), sR = serie(5);
+  let pluie = null, vent = null, raf = null;
+  if (sP) {
+    // pluie tombée depuis minuit jusqu'au départ : compte pour la boue
+    for (let h = 1; h <= debut; h++) { const v = sP[base + h]; if (v) boue += v; }
+    let tot = 0, n = 0;
+    for (let h = debut + 1; h <= fin; h++) { const v = sP[base + h]; if (v !== null && v !== undefined) { tot += v; n++; } }
+    pluie = n >= (fin - debut) * 0.8 ? tot : null;
+  }
+  const maxi = (sr) => { let mx = null; if (sr) for (let h = debut; h <= fin; h++) { const v = sr[base + h]; if (v !== null && v !== undefined) mx = mx === null ? v : Math.max(mx, v); } return mx; };
+  vent = maxi(sV); raf = maxi(sR);
+  // anciennes cartes sans données heure par heure : valeurs 8 h – 18 h
+  const j = pt[2][etat.jour] && pt[2][etat.jour][m];
+  if (pluie === null && !sP && j) pluie = j[0];
+  if (vent === null && !sV && j) { vent = j[2]; raf = j[3]; }
+  return { boue, pluie, vent, raf, ventIdx: (vent === null || raf === null) ? null : vent + 0.5 * raf, detail };
+}
+// rang relatif 0 (le meilleur) … 1 (le pire), ex aequo moyennés
+function rangs(valeurs) {
+  const idx = valeurs.map((v, i) => [v, i]).filter(x => x[0] !== null && !isNaN(x[0])).sort((a, b) => a[0] - b[0]);
+  const r = new Array(valeurs.length).fill(null), n = idx.length;
+  for (let i = 0; i < n;) {
+    let j = i; while (j + 1 < n && idx[j + 1][0] === idx[i][0]) j++;
+    const rang = n > 1 ? ((i + j) / 2) / (n - 1) : 0;
+    for (let k = i; k <= j; k++) r[idx[k][1]] = rang;
+    i = j + 1;
+  }
+  return r;
+}
+let ou = null;   // { score[], crit[], rb[], rp[], rv[] }
+// ------------------------------------------------------------------ zone atteignable en voiture
+const ZONE = { actif: false, nom: '', lat: null, lon: null, minutes: 75, durees: null, approx: false };
+try { Object.assign(ZONE, JSON.parse(localStorage.getItem('meteoVTTzone') || '{}')); } catch (e) {}
+function sauverZone() { try { localStorage.setItem('meteoVTTzone', JSON.stringify(ZONE)); } catch (e) {} }
+const RAYON_MAX_KM = 420;   // on calcule une fois les trajets jusqu'à ~4 h, le temps choisi filtre ensuite
+function distKm(a, b, c, d) { const cl = Math.cos((a + c) / 2 * Math.PI / 180); return Math.hypot((a - c) * 111, (b - d) * 111 * cl); }
+function zoneEtat(t) { const el = document.getElementById('zoneEtat'); if (el) el.innerHTML = t; }
+async function chercherVille(nom) {
+  const urls = [
+    `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(nom)}&index=address&type=municipality&limit=1`,
+    `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(nom)}&type=municipality&limit=1`,
+  ];
+  for (const u of urls) {
+    try {
+      const r = await fetch(u); if (!r.ok) continue;
+      const j = await r.json(); const f = j.features && j.features[0];
+      if (f) return { nom: f.properties.label || f.properties.city || nom, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] };
+    } catch (e) {}
+  }
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&q=${encodeURIComponent(nom)}`);
+    const j = await r.json();
+    if (j[0]) return { nom: j[0].display_name.split(',')[0], lat: +j[0].lat, lon: +j[0].lon };
+  } catch (e) {}
+  return null;
+}
+// temps de trajet réels (OSRM, routes OpenStreetMap), par lots de 90 points
+async function calculerDurees() {
+  const durees = new Array(F.points.length).fill(null);
+  const cibles = F.points.map((p, i) => i).filter(i => distKm(ZONE.lat, ZONE.lon, F.points[i][0], F.points[i][1]) <= RAYON_MAX_KM);
+  let echec = false;
+  for (let k = 0; k < cibles.length; k += 90) {
+    const lot = cibles.slice(k, k + 90);
+    zoneEtat(`Calcul des temps de trajet… ${Math.min(k + 90, cibles.length)} / ${cibles.length} points`);
+    const coords = [[ZONE.lon, ZONE.lat]].concat(lot.map(i => [F.points[i][1], F.points[i][0]])).map(c => c[0].toFixed(4) + ',' + c[1].toFixed(4)).join(';');
+    try {
+      const r = await fetch(`https://router.project-osrm.org/table/v1/driving/${coords}?sources=0&annotations=duration`);
+      const j = await r.json();
+      if (j.code !== 'Ok') throw new Error(j.code);
+      lot.forEach((i, n) => { durees[i] = j.durations[0][n + 1]; });
+    } catch (e) { echec = true; break; }
+    await new Promise(res => setTimeout(res, 1100));   // service gratuit : on reste raisonnable
+  }
+  if (echec) {
+    // repli : estimation à vol d'oiseau (×1,3 pour les détours, 80 km/h de moyenne)
+    F.points.forEach((p, i) => { durees[i] = distKm(ZONE.lat, ZONE.lon, p[0], p[1]) * 1.3 / 80 * 3600; });
+    ZONE.approx = true;
+  } else ZONE.approx = false;
+  ZONE.durees = durees.map(d => d === null ? null : Math.round(d));
+  ZONE.cle = F.points.length + ':' + F.lat0 + ':' + F.lon0;
+  sauverZone();
+}
+const coucheDepart = L.layerGroup().addTo(carte);
+function dessinerDepart() {
+  coucheDepart.clearLayers();
+  if (!ZONE.actif || ZONE.lat === null || !varCourante().special) return;
+  coucheDepart.addLayer(L.circleMarker([ZONE.lat, ZONE.lon], { radius: 7, color: '#fff', weight: 2.5, fillColor: '#1e262e', fillOpacity: 1 })
+    .bindTooltip('Départ : ' + ZONE.nom, { direction: 'top', offset: [0, -6] }));
+}
+function dansZone(i) {
+  if (!ZONE.actif || !ZONE.durees || ZONE.cle !== F.points.length + ':' + F.lat0 + ':' + F.lon0) return true;
+  const d = ZONE.durees[i];
+  return d !== null && d <= ZONE.minutes * 60;
+}
+
+function calculerOu() {
+  const crit = F.points.map((_, n) => dansZone(n) ? criteresOu(n) : { boue: null, pluie: null, ventIdx: null, detail: [] });
+  const rb = rangs(crit.map(c => c.boue)), rp = rangs(crit.map(c => c.pluie)), rv = rangs(crit.map(c => c.ventIdx));
+  const W = POIDS.boue + POIDS.pluie + POIDS.vent || 1;
+  const comb = crit.map((c, i) => (rb[i] === null || rp[i] === null || rv[i] === null) ? null :
+    (POIDS.boue * rb[i] + POIDS.pluie * rp[i] + POIDS.vent * rv[i]) / W);
+  const rf = rangs(comb);
+  ou = { score: rf.map(r => r === null ? null : Math.round(100 * (1 - r))), crit, rb, rp, rv };
+}
+
+// index de la grille régulière
+if (F) F.points.forEach((p, i) => { p.__i = i; });
+const G = F ? (() => {
+  const lat0 = F.lat0 ?? 41.30, lon0 = F.lon0 ?? -5.20;
+  let ni = 0, nj = 0;
+  const pos = F.points.map(p => {
+    const i = Math.round((p[0] - lat0) / F.dlat), j = Math.round((p[1] - lon0) / F.dlon);
+    ni = Math.max(ni, i + 1); nj = Math.max(nj, j + 1); return [i, j];
+  });
+  const k = new Int32Array(ni * nj).fill(-1);
+  pos.forEach(([i, j], n) => { k[i * nj + j] = n; });
+  return { lat0, lon0, ni, nj, k, pos };
+})() : null;
+let grilleVal = null;   // valeurs du réglage actuel, NaN si absent
+// interpolation bilinéaire : [valeur, poids des points disponibles 0-1]
+function interpoler(lat, lon) {
+  if (!grilleVal) return [NaN, 0];
+  const fi = (lat - G.lat0) / F.dlat, fj = (lon - G.lon0) / F.dlon;
+  const i0 = Math.floor(fi), j0 = Math.floor(fj), di = fi - i0, dj = fj - j0;
+  let sv = 0, sw = 0;
+  for (const [i, j, w] of [[i0, j0, (1 - di) * (1 - dj)], [i0 + 1, j0, di * (1 - dj)], [i0, j0 + 1, (1 - di) * dj], [i0 + 1, j0 + 1, di * dj]]) {
+    if (i < 0 || j < 0 || i >= G.ni || j >= G.nj) continue;
+    const v = grilleVal[i * G.nj + j];
+    if (!isNaN(v)) { sv += v * w; sw += w; }
+  }
+  return sw > 0 ? [sv / sw, sw] : [NaN, 0];
+}
+const merc = lat => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
+const demerc = y => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
+let imageGrille = null;
+function dessinerGrille() {
+  coucheGrille.clearLayers(); cellules = []; grilleVal = null;
+  if (!F || mSel() < 0) return;
+  const v = varCourante();
+  if (v.special) calculerOu();
+  const pal = (v.special || mSel() < F.modeles.length) ? PAL[v.pal] : PAL.ecart;
+  grilleVal = new Float32Array(G.ni * G.nj).fill(NaN);
+  F.points.forEach((pt, n) => {
+    const val = valeurCellule(pt);
+    if (val === null || val === undefined) return;
+    grilleVal[G.pos[n][0] * G.nj + G.pos[n][1]] = val;
+    cellules.push({ pt, val, colore: !!couleur(pal, val) });
+  });
+  // image lissée (projection Mercator respectée ligne par ligne)
+  const S = 8, W = G.nj * S, H = G.ni * S;
+  const sud = G.lat0 - F.dlat / 2, nord = G.lat0 + (G.ni - 0.5) * F.dlat;
+  const ouest = G.lon0 - F.dlon / 2, est = G.lon0 + (G.nj - 0.5) * F.dlon;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
+  const yN = merc(nord), yS = merc(sud);
+  for (let y = 0; y < H; y++) {
+    const lat = demerc(yN + (yS - yN) * (y + 0.5) / H);
+    for (let x = 0; x < W; x++) {
+      const lon = ouest + (est - ouest) * (x + 0.5) / W;
+      const [val, w] = interpoler(lat, lon);
+      if (isNaN(val) || w < 0.3) continue;
+      const c = couleurContinue(pal, val);
+      const o = (y * W + x) * 4;
+      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2];
+      img.data[o + 3] = 255 * c[3] * Math.min(1, (w - 0.3) / 0.35);   // bords adoucis
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: 0.72, interactive: false }));
+}
+
+// flèches de vent (direction d'où vient le vent -> la flèche montre où il va)
+function dessinerFleches() {
+  coucheFleches.clearLayers();
+  if (!F || mSel() < 0 || mSel() >= F.modeles.length || (etat.variable !== 2 && etat.variable !== 3)) return;
+  const z = carte.getZoom(), pas = z <= 6 ? 2 : 1, b = carte.getBounds().pad(0.05);
+  F.points.forEach((pt, n) => {
+    const [i, j] = G.pos[n];
+    if (i % pas || j % pas) return;
+    const dirs = pt[6] && pt[6][mSel()];
+    const dir = dirs ? dirs[etat.jour * 24 + etat.heure] : null;
+    if (dir === null || dir === undefined || !b.contains([pt[0], pt[1]])) return;
+    const t = z <= 6 ? 16 : 22;
+    coucheFleches.addLayer(L.marker([pt[0], pt[1]], { interactive: false, keyboard: false, icon: L.divIcon({
+      className: 'fleche', iconSize: [t, t], iconAnchor: [t / 2, z >= 8 ? t + 4 : t / 2],
+      html: `<svg width="${t}" height="${t}" viewBox="0 0 20 20" style="transform:rotate(${(dir + 180) % 360}deg)"><path d="M10 18 V4 M5 9 L10 3 L15 9" stroke="#1e262e" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".75"/></svg>` }) }));
+  });
+}
+
+// valeur sous la souris, façon Meteoblue
+carte.on('mousemove', e => {
+  const el = document.getElementById('survol');
+  const [val, w] = interpoler(e.latlng.lat, e.latlng.lng);
+  const t = e.originalEvent && e.originalEvent.target;
+  if ((t && t.closest && t.closest('.leaflet-popup')) || !F || mSel() < 0 || isNaN(val) || w < 0.3) { el.style.display = 'none'; return; }
+  const v = varCourante();
+  const ecart = mSel() >= F.modeles.length && !v.special;
+  const unite = { pluie: ' mm', vent: ' km/h', soleil: ' h', temp: ' °C' }[v.pal];
+  el.textContent = v.special ? `mieux que ${Math.round(val)} % ${ZONE.actif && ZONE.durees ? 'de ta zone' : 'de la France'}` : (ecart ? 'écart ' : '') + fmt(val, ecart ? 1 : v.dec) + unite;
+  el.style.left = (e.containerPoint.x + 14) + 'px'; el.style.top = (e.containerPoint.y - 10) + 'px';
+  el.style.display = 'block';
+});
+carte.on('mouseout popupopen', () => { document.getElementById('survol').style.display = 'none'; });
+carte.on('popupopen', () => carte.getContainer().classList.add('popup-ouverte'));
+carte.on('popupclose', () => carte.getContainer().classList.remove('popup-ouverte'));
+
+// ------------------------------------------------------------------ dessin : stations
+let pointsStations = [];
+function dessinerStations() {
+  coucheStations.clearLayers(); pointsStations = [];
+  if (!P || !etat.nPluie) return;
+  for (const s of P.stations) {
+    const c = cumul(s[6], etat.nPluie);
+    const col = couleur(PAL.passee, c.somme);
+    const z = carte.getZoom(), proche = z >= 8;
+    const m = L.circleMarker([s[2], s[3]], {
+      renderer: rendu, radius: z <= 6 ? 2.6 : z === 7 ? 4 : 6, weight: proche ? 1.2 : 0.4,
+      color: proche && c.manque ? '#8a8a8a' : '#3b2410', dashArray: proche && c.manque ? '2 2' : null,
+      fillColor: col || '#ffffff', fillOpacity: col ? 1 : 0.3
+    });
+    m.on('click', e => { L.DomEvent.stopPropagation(e); ouvrirStation(s, e.latlng); });
+    coucheStations.addLayer(m);
+    pointsStations.push({ s, c });
+  }
+}
+
+// ------------------------------------------------------------------ étiquettes (zoom >= 8)
+function dessinerEtiquettes() {
+  coucheEtiquettes.clearLayers();
+  const z = carte.getZoom();
+  const b = carte.getBounds().pad(0.05);
+  if (F && mSel() >= 0 && z >= 8) {
+    const v = varCourante();
+    const dec = mSel() < F.modeles.length ? v.dec : 0;
+    for (const c of cellules) {
+      if (!b.contains([c.pt[0], c.pt[1]])) continue;
+      if (!c.colore) continue;   // case sans couleur (sec / modèles d'accord) : pas de chiffre
+      coucheEtiquettes.addLayer(L.marker([c.pt[0], c.pt[1]], {
+        interactive: false, icon: L.divIcon({ className: 'etiquette', html: fmt(c.val, dec), iconSize: [40, 14], iconAnchor: [20, 7] })
+      }));
+    }
+  }
+  if (P && etat.nPluie && z >= 9) {
+    for (const p of pointsStations) {
+      const s = p.s;
+      if (!b.contains([s[2], s[3]])) continue;
+      coucheEtiquettes.addLayer(L.marker([s[2], s[3]], {
+        interactive: false, icon: L.divIcon({ className: 'etiquette station', html: fmt(p.c.somme, 0) + ' mm' + (p.c.manque ? '*' : ''), iconSize: [60, 14], iconAnchor: [-6, 18] })
+      }));
+    }
+  }
+}
+let zPrec = carte.getZoom();
+carte.on('zoomend', () => { const z = carte.getZoom(); if ((z <= 8) !== (zPrec <= 8) || z <= 8) dessinerStations(); zPrec = z; });
+carte.on('zoomend moveend', () => { dessinerEtiquettes(); dessinerFleches(); });
+
+// ------------------------------------------------------------------ popups
+function tableauPluie(s) {
+  const lignes = P.jours.map((j, k) => [j, s[6][k]]).slice(-10).reverse();
+  return `<table><tr><th>Jour</th><th>Pluie</th></tr>` +
+    lignes.map(([j, v]) => `<tr><td>${fmtJour(dCompact(j), true)}</td><td>${v === null ? '<span class="petit">manquant</span>' : fmt(v, 1) + ' mm'}</td></tr>`).join('') + `</table>`;
+}
+function blocCumuls(s) {
+  return `<div class="cumuls">` + [3, 5, 10].map(n => {
+    const c = cumul(s[6], n);
+    return `<div>${n} j : <b>${fmt(c.somme, 1)}</b> mm${c.manque ? ` <span class="petit">(${c.manque} j manquant${c.manque > 1 ? 's' : ''})</span>` : ''}</div>`;
+  }).join('') + `</div>`;
+}
+function ouvrirStation(s, ll) {
+  const fin = dCompact(P.jours[P.jours.length - 1]);
+  const html = `<h3>${s[1]}</h3><div class="petit">Station Météo-France ${s[0]} · ${s[4] ?? '?'} m · dép. ${s[5]}</div>` +
+    blocCumuls(s) + `<div class="petit">Jusqu'au ${fmtJour(fin, true)} inclus (journée climatologique Météo-France).</div>` +
+    tableauPluie(s);
+  L.popup({ maxWidth: Math.min(360, window.innerWidth * 0.86), autoPanPaddingTopLeft: [10, 80], autoPanPaddingBottomRight: [10, 130] }).setLatLng(ll).setContent(html).openOn(carte);
+}
+function plusProche(liste, lat, lon, f) {
+  let best = null, dmin = Infinity;
+  const cl = Math.cos(lat * Math.PI / 180);
+  for (const x of liste) {
+    const [a, b] = f(x);
+    const d = Math.hypot((a - lat) * 111, (b - lon) * 111 * cl);
+    if (d < dmin) { dmin = d; best = x; }
+  }
+  return [best, dmin];
+}
+carte.on('click', e => {
+  const { lat, lng } = e.latlng;
+  let html = '';
+  if (F) {
+    const [pt, d] = plusProche(F.points, lat, lng, p => [p[0], p[1]]);
+    if (pt && d < 40) {
+      if (varCourante().special && ou) {
+        const n = pt.__i, c = ou.crit[n], pc = r => r === null ? '—' : Math.round(100 * (1 - r)) + ' %';
+        const zoneTxt = ZONE.actif && ZONE.durees ? (ZONE.durees[n] !== null ? ` · ${Math.floor(ZONE.durees[n] / 3600)} h ${String(Math.round(ZONE.durees[n] / 60) % 60).padStart(2, '0')} de ${ZONE.nom}${ZONE.approx ? ' (estimé)' : ''}` : '') : '';
+        const ref = ZONE.actif && ZONE.durees ? 'de ta zone' : 'de la France';
+        html += `<h3>Où rouler ? ${fmtJour(dIso(F.jours[etat.jour]), true)} : mieux que ${ou.score[n] ?? '—'} % ${ref}${zoneTxt}</h3>` +
+          `<table><tr><th>Critère</th><th>Valeur ici</th><th>Mieux que</th></tr>` +
+          `<tr><td>Boue (pluie passée pondérée)</td><td>${fmt(c.boue, 1)} mm</td><td>${pc(ou.rb[n])}</td></tr>` +
+          `<tr><td>Pluie de ${SORTIE.debut} h à ${SORTIE.fin} h</td><td>${fmt(c.pluie, 1)} mm</td><td>${pc(ou.rp[n])}</td></tr>` +
+          `<tr><td>Vent / rafales max (${SORTIE.debut} h – ${SORTIE.fin} h)</td><td>${fmt(c.vent)} / ${fmt(c.raf)} km/h</td><td>${pc(ou.rv[n])}</td></tr></table>` +
+          `<div class="petit">Pluie des jours précédents : ` + c.detail.slice().reverse().map(([x, v, src]) => {
+            const d = new Date(x * 864e5); return `${d.getUTCDate()}/${d.getUTCMonth() + 1} ${fmt(v, 1)} (${src})`; }).join(', ') +
+          `. Les jours les plus récents comptent le plus (poids divisé par 2 tous les 3 jours).</div><br>`;
+      }
+      html += `<h3>Prévisions</h3>`;
+      html += `<table><tr><th>Jour</th><th>Modèle</th><th>Pluie de jour</th><th>Pluie 24 h</th><th>Vent</th><th>Rafales</th><th>Soleil</th><th>T°</th></tr>`;
+      F.jours.forEach((j, k) => {
+        const jour = pt[2][k];
+        F.modeles.forEach((m, im) => {
+          const v = jour[im];
+          const autre = jour[1 - im];
+          const diff = (i, seuil) => F.modeles.length > 1 && autre && v[i] !== null && autre[i] !== null && Math.abs(v[i] - autre[i]) >= seuil;
+          const td = (i, dec, unite, seuil) => `<td class="${diff(i, seuil) ? 'ecart' : ''}">${fmt(v[i], dec)}${v[i] === null ? '' : unite}</td>`;
+          html += `<tr${dIso(j).getDay() === 6 ? ' style="background:#eef3f8"' : ''}><td>${im === 0 ? fmtJour(dIso(j)) : ''}</td><td class="petit" style="text-align:left">${m}</td>` +
+            td(0, 1, '', 2) + td(1, 1, '', 3) + td(2, 0, '', 10) + td(3, 0, '', 15) + td(4, 1, ' h', 2) + td(5, 0, '°', 3) + `</tr>`;
+        });
+      });
+      html += `</table>`;
+      html += `<div class="petit">Pluie de jour : de ${F.heures_velo[0]} h à ${F.heures_velo[1]} h. Pluie 24 h : de minuit à minuit. Vent, rafales, soleil et T° : entre ${F.heures_velo[0]} h et ${F.heures_velo[1]} h. Pluie en mm, vent en km/h. <span class="ecart">En orange</span> : les deux modèles divergent nettement. Point de grille à ${Math.round(d)} km.</div>`;
+      const heures = Array.from({ length: 16 }, (_, k) => k + 6);
+      const ligne = (titre, serie, pal, dec, dirs) => `<tr><td class="petit" style="text-align:left !important;white-space:nowrap">${titre}</td>` + heures.map(h => {
+        const v = serie ? serie[etat.jour * 24 + h] : null;
+        const c = v === null || v === undefined ? null : couleurContinue(pal, v);
+        const fond = c && c[3] > 0.05 ? `background:rgba(${c[0]|0},${c[1]|0},${c[2]|0},${Math.min(1, c[3]) * .75})` : '';
+        const d = dirs ? dirs[etat.jour * 24 + h] : null;
+        const fl = d === null || d === undefined ? '' : `<span style="display:inline-block;transform:rotate(${(d + 180) % 360}deg);font-size:9px">↑</span>`;
+        return `<td style="${fond}">${v === null || v === undefined ? '—' : (pal === PAL.pluie && v === 0) ? '·' : fmt(v, dec)}${fl}</td>`;
+      }).join('') + `</tr>`;
+      if (pt[3]) {
+        html += `<h3 style="margin-top:8px">Heure par heure, ${fmtJour(dIso(F.jours[etat.jour]), true)}</h3><table class="horaire"><tr><th></th>${heures.map(h => `<th>${h}h</th>`).join('')}</tr>`;
+        F.modeles.forEach((m, im) => { html += ligne('Pluie ' + m, pt[3][im], PAL.pluie, 1); });
+        if (pt[4]) F.modeles.forEach((m, im) => {
+          html += ligne('Vent ' + m, pt[4][im], PAL.vent, 0, pt[6] && pt[6][im]);
+          html += ligne('Rafales ' + m, pt[5][im], PAL.vent, 0);
+        });
+        html += `</table><div class="petit">Pluie en mm tombés dans l'heure qui précède (13h = de 12 h à 13 h). Vent et rafales en km/h, la petite flèche montre où va le vent. Jour choisi dans la barre du bas.</div>`;
+      }
+    }
+  }
+  if (P) {
+    const [ps, ds] = plusProche(pointsStations, lat, lng, p => [p.s[2], p.s[3]]);
+    if (ps) {
+      html += `<h3 style="margin-top:10px">Pluie tombée : ${ps.s[1]}</h3><div class="petit">Station la plus proche, à ${Math.round(ds)} km · ${ps.s[4] ?? '?'} m</div>` + blocCumuls(ps.s);
+    }
+  }
+  if (html) L.popup({ maxWidth: Math.min(560, window.innerWidth * 0.86), autoPanPaddingTopLeft: [10, 80], autoPanPaddingBottomRight: [10, 130] }).setLatLng(e.latlng).setContent(html).openOn(carte);
+});
+
+// ------------------------------------------------------------------ panneau
+function boutons(id, items, actif, onclick) {
+  const el = document.getElementById(id);
+  el.innerHTML = '';
+  items.forEach(it => {
+    const b = document.createElement('button');
+    b.textContent = it.label;
+    if (it.cls) b.className = it.cls;
+    if (it.val === actif) b.classList.add('actif');
+    if (it.disabled) b.disabled = true;
+    b.onclick = () => onclick(it.val);
+    el.appendChild(b);
+  });
+}
+// curseur des heures (pluie heure par heure)
+(function () {
+  const b = document.getElementById('barreHeures');
+  b.innerHTML = `<button id="hLecture" title="Lecture : fait défiler les heures (barre d'espace)" style="width:34px">▶</button>` +
+    `<button id="hMoins" title="Heure précédente (flèche gauche)">‹</button>` +
+    `<input id="hCurseur" type="range" min="0" max="23" step="1">` +
+    `<button id="hPlus" title="Heure suivante (flèche droite)">›</button>` +
+    `<span class="heure" id="hTexte"></span><span class="detail" id="hDetail"></span>`;
+  const changer = h => {
+    if (h < 0) { if (etat.jour > 0) { etat.jour--; h = 23; } else h = 0; }
+    if (h > 23) { if (F && etat.jour < F.jours.length - 1) { etat.jour++; h = 0; } else h = 23; }
+    etat.heure = h; sauver(); maj();
+  };
+  document.getElementById('hMoins').onclick = ev => { L.DomEvent.stop(ev); arreter(); changer(etat.heure - 1); };
+  document.getElementById('hPlus').onclick = ev => { L.DomEvent.stop(ev); arreter(); changer(etat.heure + 1); };
+  document.getElementById('hCurseur').oninput = ev => { arreter(); changer(+ev.target.value); };
+  // lecture : une heure toutes les 0,6 s, jusqu'à la fin de la prévision
+  let minuterie = null;
+  const bLect = document.getElementById('hLecture');
+  function arreter() { if (minuterie) { clearInterval(minuterie); minuterie = null; } bLect.textContent = '▶'; }
+  function lire() {
+    if (minuterie) { arreter(); return; }
+    if (etat.jour === F.jours.length - 1 && etat.heure === 23) { etat.jour = 0; etat.heure = 0; }
+    bLect.textContent = '⏸';
+    minuterie = setInterval(() => {
+      if (etat.jour === F.jours.length - 1 && etat.heure === 23) { arreter(); return; }
+      changer(etat.heure + 1);
+    }, 600);
+  }
+  bLect.onclick = ev => { L.DomEvent.stop(ev); lire(); };
+  window.arreterLecture = arreter;
+  document.addEventListener('keydown', ev => {
+    if (!varCourante().horaire || ev.target.tagName === 'INPUT' && ev.target.type !== 'range') return;
+    if (ev.key === ' ') { ev.preventDefault(); lire(); }
+    if (ev.key === 'ArrowLeft') { ev.preventDefault(); arreter(); changer(etat.heure - 1); }
+    if (ev.key === 'ArrowRight') { ev.preventDefault(); arreter(); changer(etat.heure + 1); }
+  });
+})();
+function majHeures() {
+  const b = document.getElementById('barreHeures');
+  const actif = F && mSel() >= 0 && varCourante().horaire;
+  b.style.display = actif ? 'flex' : 'none';
+  if (!actif) return;
+  document.getElementById('hCurseur').value = etat.heure;
+  document.getElementById('hTexte').textContent = String(etat.heure).padStart(2, '0') + ':00';
+  const h0 = (etat.heure + 23) % 24;
+  document.getElementById('hDetail').textContent = varCourante().id === 0 ? `pluie de ${h0} h à ${etat.heure} h` : varCourante().nom.toLowerCase() + ' à ' + etat.heure + ' h';
+}
+function majPanneau() {
+  majHeures();
+  if (P) {
+    boutons('choixPluie', [3, 5, 10].map(n => ({ label: n + ' derniers jours', val: n })).concat([{ label: 'Masquer', val: 0 }]), etat.nPluie,
+      v => { etat.nPluie = v; sauver(); dessinerStations(); dessinerEtiquettes(); majPanneau(); });
+    const fin = dCompact(P.jours[P.jours.length - 1]);
+    const deb = dCompact(P.jours[P.jours.length - (etat.nPluie || 10)]);
+    document.getElementById('notePluie').innerHTML = `Cumul du ${fmtJour(deb, true)} au ${fmtJour(fin, true)} inclus, ${P.stations.length} stations. ` +
+      `Contour pointillé gris = jour(s) manquant(s), cumul incomplet. Chiffres visibles en zoomant.`;
+    if (etat.nPluie) legende(document.getElementById('legPluie'), PAL.passee, `Pluie tombée sur ${etat.nPluie} jours (mm)`);
+    else { document.getElementById('legPluie').innerHTML = ''; document.getElementById('notePluie').textContent = 'Points masqués.'; }
+  } else {
+    document.getElementById('notePluie').textContent = 'Pluie mesurée indisponible.';
+  }
+  if (F) {
+    const barre = document.getElementById('barreJours');
+    barre.innerHTML = '';
+    F.jours.forEach((j, k) => {
+      const d = dIso(j), bt = document.createElement('button');
+      bt.innerHTML = `${JOURS_SEM[d.getDay()]}<span class="sous">${d.getDate()}/${String(d.getMonth() + 1).padStart(2, '0')}</span>`;
+      if (d.getDay() === 6) bt.classList.add('samedi');
+      if (k === etat.jour) bt.classList.add('actif');
+      bt.onclick = ev => { L.DomEvent.stop(ev); etat.jour = k; maj(); };
+      barre.appendChild(bt);
+    });
+    boutons('choixVar', VARS.map(v => ({ label: v.nom, val: v.id })), etat.variable,
+      v => { etat.variable = v; if (!varCourante().horaire && window.arreterLecture) arreterLecture(); sauver(); maj(); });
+    const spe = varCourante().special;
+    const mods = [{ label: 'Auto', val: AUTO }].concat(F.modeles.map((m, i) => ({ label: m, val: i, disabled: spe })));
+    if (F.modeles.length > 1) mods.push({ label: 'Écart entre modèles', val: F.modeles.length, disabled: spe });
+    mods.push({ label: 'Masquer', val: -1 });
+    boutons('choixModele', mods, spe && etat.modele >= 0 ? AUTO : etat.modele, v => { etat.modele = v; sauver(); maj(); });
+    const v = varCourante();
+    const dj = dIso(F.jours[etat.jour]);
+    const lv = document.getElementById('legVert');
+    if (mSel() < 0) { document.getElementById('notePrev').textContent = 'Fond de prévision masqué.'; lv.style.display = 'none'; return; }
+    let note = `<b>${v.nom}</b> : ${v.aide}. ${fmtJour(dj, true)}`;
+    if (mSel() < F.modeles.length) note += `, modèle ${nomModele()}.`;
+    else note += ` : différence entre ${F.modeles.join(' et ')}. Transparent ou clair = ils sont d'accord, foncé = ils divergent.`;
+    const hTxt = String(etat.heure).padStart(2, '0') + ':00';
+    if (v.id === 0) note = `<b>Pluie</b> : mm tombés en 1 h, de ${(etat.heure + 23) % 24} h à ${etat.heure} h, ${fmtJour(dj, true)}` +
+      (mSel() < F.modeles.length ? `, modèle ${nomModele()}. Pas de couleur = sec.` : ` : différence entre les deux modèles.`);
+    if (v.id === 2 || v.id === 3) note = `<b>${v.nom}</b> à ${hTxt}, ${fmtJour(dj, true)}` +
+      (mSel() < F.modeles.length ? `, modèle ${nomModele()}. Les flèches montrent où va le vent.` : ` : différence entre les deux modèles.`);
+    if (v.special) note = `<b>Où rouler ?</b> ${fmtJour(dj, true)} : classement <b>relatif</b> ${ZONE.actif && ZONE.durees ? 'des endroits à moins de ' + Math.floor(ZONE.minutes / 60) + ' h ' + String(ZONE.minutes % 60).padStart(2, '0') + ' de ' + ZONE.nom : 'de toute la France'} pour ce jour, modèle ${nomModele()}. ` +
+      `<span style="color:#1b7837;font-weight:600">Vert</span> = parmi les meilleurs endroits, <span style="color:#b2182b;font-weight:600">rouge</span> = parmi les pires. ` +
+      `Combine la boue (pluie des 10 jours précédents, les plus récents comptent plus, + la pluie depuis minuit jusqu'au départ), la pluie pendant ta sortie (${SORTIE.debut} h – ${SORTIE.fin} h) et le vent/rafales sur la même tranche. ` +
+      `Vert ne veut pas dire bon : si toute la France est arrosée, le vert est seulement le moins pire.`;
+    if (v.horaire) note += ` Choisis l'heure avec le curseur au-dessus des jours, les flèches du clavier ou le bouton lecture.`;
+    if (v.horaire && !F.points[0][v.horaire]) note += ` <b>Relance « Mettre a jour la carte » pour avoir les données heure par heure.</b>`;
+    const nVide = F.points.filter(p => valeurCellule(p) === null || valeurCellule(p) === undefined).length;
+    if (!v.special && nVide > F.points.length / 2) note += ` <b>Ce modèle ne couvre pas ce jour (pas de valeur).</b>`;
+    document.getElementById('notePrev').innerHTML = note;
+    const pal = (v.special || mSel() < F.modeles.length) ? PAL[v.pal] : PAL.ecart;
+    const unite = { pluie: 'mm', vent: 'km/h', soleil: 'h', temp: '°C', ou: '% de la France battus' }[v.pal];
+    document.getElementById('reglagesOu').style.display = v.special ? 'block' : 'none';
+    // légende verticale : dégradé continu, graduations aux paliers
+    const N = pal.seuils.length, haut = Math.max(220, N * 17);
+    const stops = pal.seuils.map((sv, i) => { const c = couleurContinue(pal, sv); return `rgba(${c[0]|0},${c[1]|0},${c[2]|0},${c[3]}) ${i / (N - 1) * 100}%`; });
+    lv.style.display = 'flex';
+    lv.innerHTML = `<div class="unite">${v.special ? 'Où rouler ? (meilleur en haut)' : mSel() < F.modeles.length ? v.nom : 'Écart'}${v.special ? '' : ' (' + unite + ')'}</div>` +
+      `<div class="degrade" style="height:${haut}px;background:linear-gradient(to top, ${stops.join(',')}), repeating-linear-gradient(45deg,#fff 0 3px,#e9e9e9 3px 6px)"></div>` +
+      `<div class="graduations" style="height:${haut}px">${pal.seuils.map((sv, i) => `<span style="bottom:${i / (N - 1) * haut}px">${String(sv).replace('.', ',')}</span>`).join('')}</div>`;
+  } else {
+    document.getElementById('notePrev').textContent = 'Prévisions indisponibles.';
+  }
+}
+(function () {
+  const cb = document.getElementById('zoneActive'), ville = document.getElementById('zoneVille'), tps = document.getElementById('zoneTemps');
+  for (let m = 30; m <= 240; m += 15) tps.add(new Option(`${Math.floor(m / 60)} h ${String(m % 60).padStart(2, '0')}`, m));
+  cb.checked = ZONE.actif; ville.value = ZONE.nom; tps.value = ZONE.minutes;
+  const montrer = () => {
+    document.getElementById('zoneReglages').style.display = cb.checked ? 'block' : 'none';
+    if (!cb.checked) zoneEtat('');
+    else if (!ZONE.durees) zoneEtat('Tape ta ville de départ puis « Chercher ».');
+    else zoneEtat(`Départ : <b>${ZONE.nom}</b>. ${ZONE.durees.filter(d => d !== null && d <= ZONE.minutes * 60).length} points à moins de ${tps.options[tps.selectedIndex].text}.` +
+      (ZONE.approx ? ' <b>Temps estimés à vol d\'oiseau</b> (le service d\'itinéraires n\'a pas répondu).' : ' Temps calculés sur les routes (OSRM).'));
+  };
+  const redessiner = () => { montrer(); dessinerDepart(); dessinerGrille(); dessinerEtiquettes(); majPanneau(); };
+  const cadrer = () => {
+    if (!ZONE.durees) return;
+    const pts = F.points.filter((p, i) => ZONE.durees[i] !== null && ZONE.durees[i] <= ZONE.minutes * 60).map(p => [p[0], p[1]]);
+    if (pts.length) carte.fitBounds(L.latLngBounds(pts).pad(0.25));
+  };
+  cb.onchange = () => { ZONE.actif = cb.checked; sauverZone(); redessiner(); };
+  tps.onchange = () => { ZONE.minutes = +tps.value; sauverZone(); redessiner(); cadrer(); };
+  const lancer = async () => {
+    if (!ville.value.trim()) return;
+    zoneEtat('Recherche de la ville…');
+    const v = await chercherVille(ville.value.trim());
+    if (!v) { zoneEtat('<b>Ville introuvable</b> (ou pas de connexion). Vérifie l\'orthographe.'); return; }
+    Object.assign(ZONE, v, { durees: null }); ville.value = v.nom;
+    await calculerDurees(); redessiner(); cadrer();
+  };
+  document.getElementById('zoneChercher').onclick = lancer;
+  ville.onkeydown = ev => { if (ev.key === 'Enter') lancer(); };
+  montrer();
+  window.majZonePanneau = montrer;
+})();
+(function () {
+  const d = document.getElementById('sortieDebut'), f = document.getElementById('sortieFin');
+  for (let h = 0; h <= 23; h++) d.add(new Option(h + ' h', h));
+  for (let h = 1; h <= 24; h++) f.add(new Option(h + ' h', h));
+  d.value = SORTIE.debut; f.value = SORTIE.fin;
+  const changer = () => {
+    let a = +d.value, b = +f.value;
+    if (b <= a) { b = Math.min(24, a + 1); f.value = b; }
+    SORTIE.debut = a; SORTIE.fin = b;
+    try { localStorage.setItem('meteoVTTsortie', JSON.stringify(SORTIE)); } catch (e) {}
+    dessinerGrille(); dessinerEtiquettes(); majPanneau();
+  };
+  d.onchange = changer; f.onchange = changer;
+  [['poidsBoue', 'vBoue', 'boue'], ['poidsPluie', 'vPluie', 'pluie'], ['poidsVent', 'vVent', 'vent']].forEach(([id, lab, cle]) => {
+    const el = document.getElementById(id);
+    el.value = POIDS[cle]; document.getElementById(lab).textContent = POIDS[cle];
+    el.oninput = () => {
+      POIDS[cle] = +el.value; document.getElementById(lab).textContent = el.value;
+      try { localStorage.setItem('meteoVTTpoids', JSON.stringify(POIDS)); } catch (e) {}
+      dessinerGrille(); dessinerEtiquettes();
+    };
+  });
+})();
+function maj() { dessinerDepart(); dessinerGrille(); dessinerEtiquettes(); dessinerFleches(); majPanneau(); }
+
+dessinerStations();
+maj();
+</script>
+<script>
+// appli web : enregistrement du service worker (seulement quand la carte est en ligne)
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+</body>
+</html>

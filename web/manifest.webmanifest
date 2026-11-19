@@ -1,0 +1,16 @@
+{
+  "name": "Météo VTT",
+  "short_name": "Météo VTT",
+  "description": "Pluie tombée, prévisions et meilleur endroit où rouler",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#1e262e",
+  "theme_color": "#1e262e",
+  "lang": "fr",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

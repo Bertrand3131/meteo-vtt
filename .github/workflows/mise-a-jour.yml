@@ -1,0 +1,65 @@
+# Fabrique la carte Météo VTT et la publie sur GitHub Pages.
+# - automatiquement vers 5 h 40, 11 h 40 et 17 h 40 (heure de Paris en hiver ; en été, une heure plus tard)
+# - à chaque modification du programme ou de la carte
+# - à la main : onglet « Actions » -> « Mise à jour de la carte » -> « Run workflow »
+name: Mise à jour de la carte
+
+on:
+  schedule:
+    - cron: '40 4,10,16 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'meteo_vtt.py'
+      - 'modele_carte.html'
+      - 'web/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  carte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fabriquer la carte
+        env:
+          METEO_SORTIE: site/index.html
+          TZ: Europe/Paris
+        run: |
+          python3 meteo_vtt.py --sans-ouvrir || echo "::warning::Une partie des données n'a pas pu être récupérée (voir le détail ci-dessus)."
+          test -f site/index.html
+          cp web/* site/
+
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+      - id: deploiement
+        uses: actions/deploy-pages@v5
+
+      # Une petite trace par semaine dans le dépôt : sans activité pendant 60 jours,
+      # GitHub met en pause les mises à jour planifiées.
+      - name: Trace hebdomadaire
+        run: |
+          date +%G-semaine-%V > derniere_maj.txt
+          if [ -n "$(git status --porcelain derniere_maj.txt)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add derniere_maj.txt
+            git commit -m "Trace hebdomadaire"
+            git push
+          fi

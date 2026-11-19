@@ -1,0 +1,496 @@
+# -*- coding: utf-8 -*-
+"""
+Carte météo VTT
+================
+Télécharge :
+  - la pluie MESURÉE par les stations Météo-France (données quotidiennes
+    publiques de data.gouv.fr) sur les 14 derniers jours disponibles ;
+  - les PRÉVISIONS de deux modèles (Météo-France et ECMWF) via Open-Meteo,
+    sur une grille couvrant la France ;
+puis fabrique « Carte meteo VTT.html » et l'ouvre dans le navigateur.
+
+Aucun module à installer : uniquement la bibliothèque standard de Python.
+Lancement : double-clic sur « Mettre a jour la carte.bat »
+"""
+
+import csv
+import datetime as dt
+import gzip
+import io
+import json
+import math
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# ---------------------------------------------------------------- réglages
+DOSSIER = os.path.dirname(os.path.abspath(__file__))
+CACHE = os.path.join(DOSSIER, "cache")
+MODELE_HTML = os.path.join(DOSSIER, "modele_carte.html")
+SORTIE_HTML = os.environ.get("METEO_SORTIE") or os.path.join(DOSSIER, "Carte meteo VTT.html")
+EN_LIGNE = bool(os.environ.get("GITHUB_ACTIONS"))   # exécution sur les serveurs de GitHub
+
+DATASET_QUOT = "6569b51ae64326786e4e8e1a"   # Données climatologiques de base - quotidiennes
+API_DATAGOUV = "https://www.data.gouv.fr/api/2/datasets/%s/resources/?page=%d&page_size=100"
+JOURS_PLUIE = 14            # jours de pluie passée gardés (la carte en affiche 3/5/10)
+
+# Grille de prévision (degrés). 0.25 x 0.35 ≈ 28 x 28 km.
+GRILLE_DLAT = 0.25
+GRILLE_DLON = 0.35
+GRILLE_MAX_KM_STATION = 30  # on ne garde que les points proches d'une station (= sur terre)
+JOURS_PREVISION = 7
+JOURS_PASSES_MODELE = 4   # pluie estimée par les modèles sur les derniers jours (comble le retard des stations)
+HEURE_DEBUT, HEURE_FIN = 8, 18   # « journée de vélo » : de 8 h à 18 h
+LOTS_OPENMETEO = 50              # points par requête
+PAUSE_OPENMETEO = 4.0            # secondes entre requêtes (limite gratuite : ~600 appels/min)
+
+# Modèles essayés dans l'ordre (le premier accepté par Open-Meteo est gardé)
+MODELES = [
+    ("Météo-France", ["meteofrance_seamless", "meteofrance_arpege_europe"]),
+    ("ECMWF",        ["ecmwf_ifs", "ecmwf_ifs025"]),
+]
+VARIABLES_HORAIRES = ["precipitation", "wind_speed_10m", "wind_gusts_10m",
+                      "sunshine_duration", "temperature_2m", "wind_direction_10m"]
+
+UA = "carte-meteo-vtt/1.0 (usage personnel)"
+COPIE_ONEDRIVE = True   # copie aussi la carte dans OneDrive\Meteo VTT pour l'ouvrir sur le téléphone
+
+
+# ---------------------------------------------------------------- outils
+def info(msg):
+    print(msg, flush=True)
+
+
+def http_get(url, entetes=None, timeout=60):
+    """Renvoie (code, contenu_bytes, entetes_reponse). Lève une exception sur erreur réseau."""
+    h = {"User-Agent": UA}
+    if entetes:
+        h.update(entetes)
+    req = urllib.request.Request(url, headers=h)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        corps = b""
+        try:
+            corps = e.read()
+        except Exception:
+            pass
+        return e.code, corps, dict(e.headers or {})
+
+
+def num(txt):
+    if txt is None:
+        return None
+    t = str(txt).strip().replace(",", ".")
+    if t == "":
+        return None
+    try:
+        return float(t)
+    except ValueError:
+        return None
+
+
+def dist_km(lat1, lon1, lat2, lon2):
+    x = math.radians(lon2 - lon1) * math.cos(math.radians((lat1 + lat2) / 2))
+    y = math.radians(lat2 - lat1)
+    return 6371 * math.hypot(x, y)
+
+
+# ---------------------------------------------------------------- 1. pluie mesurée
+RE_TITRE = re.compile(r"departement_([0-9AB]{2,3})_periode_(\d{4})-(\d{4})_RR-T-Vent", re.I)
+
+
+def lister_fichiers_quotidiens():
+    """Liste des fichiers « RR-T-Vent » les plus récents, un par département de métropole."""
+    ressources = []
+    page = 1
+    while page < 30:
+        code, corps, _ = http_get(API_DATAGOUV % (DATASET_QUOT, page))
+        if code != 200:
+            raise RuntimeError("data.gouv.fr a répondu %s à la liste des fichiers" % code)
+        d = json.loads(corps.decode("utf-8"))
+        lot = d.get("data") or []
+        ressources.extend(lot)
+        if not lot or not d.get("next_page"):
+            break
+        page += 1
+
+    par_dep = {}
+    for r in ressources:
+        texte = (r.get("title") or "") + " " + (r.get("url") or "")
+        m = RE_TITRE.search(texte)
+        if not m:
+            continue
+        dep, fin = m.group(1).upper(), int(m.group(3))
+        if len(dep) == 3:            # outre-mer (971, 972…) : ignoré
+            continue
+        if dep.isdigit() and int(dep) > 95:
+            continue
+        if dep not in par_dep or fin > par_dep[dep][0]:
+            par_dep[dep] = (fin, r.get("url"))
+    return {dep: url for dep, (fin, url) in sorted(par_dep.items())}
+
+
+def telecharger_avec_cache(dep, url):
+    """Télécharge un fichier si il a changé depuis la dernière fois (ETag / Last-Modified)."""
+    os.makedirs(CACHE, exist_ok=True)
+    chemin = os.path.join(CACHE, "Q_%s_RR-T-Vent.csv.gz" % dep)
+    meta_chemin = chemin + ".json"
+    meta = {}
+    if os.path.exists(chemin) and os.path.exists(meta_chemin):
+        try:
+            with open(meta_chemin, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+    entetes = {}
+    if meta.get("url") == url:
+        if meta.get("etag"):
+            entetes["If-None-Match"] = meta["etag"]
+        if meta.get("last_modified"):
+            entetes["If-Modified-Since"] = meta["last_modified"]
+    code, corps, rep = http_get(url, entetes, timeout=120)
+    if code == 304:
+        return chemin, False
+    if code != 200:
+        if os.path.exists(chemin):
+            return chemin, False      # on garde l'ancienne version
+        raise RuntimeError("département %s : réponse %s" % (dep, code))
+    with open(chemin, "wb") as f:
+        f.write(corps)
+    rep_l = {k.lower(): v for k, v in rep.items()}
+    with open(meta_chemin, "w", encoding="utf-8") as f:
+        json.dump({"url": url, "etag": rep_l.get("etag"),
+                   "last_modified": rep_l.get("last-modified")}, f)
+    return chemin, True
+
+
+def lire_pluie(chemin, date_min):
+    """Lit un fichier départemental -> {num_poste: {infos, 'rr': {date: mm}}}."""
+    stations = {}
+    with gzip.open(chemin, "rt", encoding="utf-8", errors="replace", newline="") as f:
+        lecteur = csv.reader(f, delimiter=";")
+        entete = [c.strip().upper() for c in next(lecteur)]
+        i = {nom: entete.index(nom) for nom in
+             ("NUM_POSTE", "NOM_USUEL", "LAT", "LON", "ALTI", "AAAAMMJJ", "RR") if nom in entete}
+        if len(i) < 7:
+            raise RuntimeError("colonnes inattendues dans %s : %s" % (os.path.basename(chemin), entete[:10]))
+        for ligne in lecteur:
+            if len(ligne) <= max(i.values()):
+                continue
+            jour = ligne[i["AAAAMMJJ"]].strip()
+            if jour < date_min:
+                continue
+            poste = ligne[i["NUM_POSTE"]].strip()
+            s = stations.get(poste)
+            if s is None:
+                s = stations[poste] = {
+                    "nom": ligne[i["NOM_USUEL"]].strip(),
+                    "lat": num(ligne[i["LAT"]]), "lon": num(ligne[i["LON"]]),
+                    "alt": num(ligne[i["ALTI"]]), "rr": {}}
+            rr = num(ligne[i["RR"]])
+            if rr is not None:
+                s["rr"][jour] = rr
+    return stations
+
+
+def pluie_mesuree():
+    info("1/3  Liste des fichiers de stations Météo-France (data.gouv.fr)…")
+    fichiers = lister_fichiers_quotidiens()
+    if not fichiers:
+        raise RuntimeError("aucun fichier « RR-T-Vent » trouvé sur data.gouv.fr")
+    info("     %d départements trouvés. Téléchargement (seuls les fichiers modifiés sont rechargés)…" % len(fichiers))
+
+    chemins, nouveaux, erreurs = {}, 0, []
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        futurs = {ex.submit(telecharger_avec_cache, dep, url): dep for dep, url in fichiers.items()}
+        for k, fu in enumerate(as_completed(futurs), 1):
+            dep = futurs[fu]
+            try:
+                chemins[dep], neuf = fu.result()
+                nouveaux += neuf
+            except Exception as e:
+                erreurs.append("%s (%s)" % (dep, e))
+            if k % 10 == 0:
+                info("     … %d/%d" % (k, len(fichiers)))
+    info("     %d fichiers téléchargés, %d inchangés." % (nouveaux, len(chemins) - nouveaux))
+    if erreurs:
+        info("     Départements en erreur : " + ", ".join(erreurs))
+
+    date_min = (dt.date.today() - dt.timedelta(days=40)).strftime("%Y%m%d")
+    toutes = {}
+    for dep, chemin in sorted(chemins.items()):
+        try:
+            for poste, s in lire_pluie(chemin, date_min).items():
+                s["dep"] = dep
+                toutes[poste] = s
+        except Exception as e:
+            info("     Lecture impossible pour le %s : %s" % (dep, e))
+
+    # Dernier jour « complet » : le plus récent où au moins la moitié des stations ont une valeur
+    compte = {}
+    for s in toutes.values():
+        for j in s["rr"]:
+            compte[j] = compte.get(j, 0) + 1
+    if not compte:
+        raise RuntimeError("aucune valeur de pluie récente dans les fichiers")
+    maxi = max(compte.values())
+    dernier = max(j for j, n in compte.items() if n >= 0.5 * maxi)
+    d_fin = dt.datetime.strptime(dernier, "%Y%m%d").date()
+    jours = [(d_fin - dt.timedelta(days=JOURS_PLUIE - 1 - k)).strftime("%Y%m%d") for k in range(JOURS_PLUIE)]
+
+    liste = []
+    for poste, s in toutes.items():
+        if s["lat"] is None or s["lon"] is None:
+            continue
+        valeurs = [s["rr"].get(j) for j in jours]
+        if all(v is None for v in valeurs[-10:]):
+            continue        # station sans mesure récente
+        liste.append([poste, s["nom"], round(s["lat"], 4), round(s["lon"], 4),
+                      None if s["alt"] is None else int(s["alt"]), s["dep"], valeurs])
+    info("     %d stations avec des mesures récentes. Dernier jour disponible : %s." %
+         (len(liste), d_fin.strftime("%d/%m/%Y")))
+    return {"jours": jours, "stations": liste, "erreurs": erreurs}
+
+
+# ---------------------------------------------------------------- 2. prévisions
+URL_OM = "https://api.open-meteo.com/v1/forecast"
+
+
+def requete_openmeteo(lats, lons, modeles):
+    params = {
+        "latitude": ",".join("%.3f" % x for x in lats),
+        "longitude": ",".join("%.3f" % x for x in lons),
+        "hourly": ",".join(VARIABLES_HORAIRES),
+        "models": ",".join(modeles),
+        "timezone": "Europe/Paris",
+        "forecast_days": JOURS_PREVISION,
+        "past_days": JOURS_PASSES_MODELE,
+        "wind_speed_unit": "kmh",
+    }
+    url = URL_OM + "?" + urllib.parse.urlencode(params, safe=",")
+    for essai in range(5):
+        try:
+            code, corps, _ = http_get(url, timeout=90)
+        except Exception as e:      # coupure réseau, délai dépassé… : on réessaie
+            attente = 10 * (essai + 1)
+            info("     Connexion à Open-Meteo interrompue (%s), nouvel essai dans %d s…" % (str(e)[:80], attente))
+            time.sleep(attente)
+            continue
+        if code == 200:
+            d = json.loads(corps.decode("utf-8"))
+            return d if isinstance(d, list) else [d]
+        if code == 429:
+            info("     Limite d'Open-Meteo atteinte, pause d'une minute…")
+            time.sleep(65)
+            continue
+        raise RuntimeError("Open-Meteo a répondu %s : %s" % (code, corps[:300].decode("utf-8", "replace")))
+    raise RuntimeError("Open-Meteo ne répond pas ou refuse les requêtes après plusieurs essais. Réessaie plus tard.")
+
+
+def choisir_modeles():
+    choisis = []
+    for nom, candidats in MODELES:
+        for c in candidats:
+            try:
+                requete_openmeteo([45.0], [3.0], [c])
+                choisis.append((nom, c))
+                break
+            except RuntimeError as e:
+                info("     Modèle %s refusé (%s), j'essaie le suivant." % (c, str(e)[:80]))
+        else:
+            info("     Aucun modèle disponible pour %s." % nom)
+    if not choisis:
+        raise RuntimeError("aucun modèle de prévision accepté par Open-Meteo")
+    return choisis
+
+
+def grille(stations):
+    """Points de grille à moins de GRILLE_MAX_KM_STATION d'une station (≈ terre ferme)."""
+    seau = {}
+    for s in stations:
+        seau.setdefault((int(s[2] * 4), int(s[3] * 4)), []).append((s[2], s[3]))
+    pts = []
+    lat = 41.30
+    while lat <= 51.15:
+        lon = -5.20
+        while lon <= 9.65:
+            proche = False
+            cle = (int(lat * 4), int(lon * 4))
+            for di in (-2, -1, 0, 1, 2):
+                for dj in (-2, -1, 0, 1, 2):
+                    for (a, b) in seau.get((cle[0] + di, cle[1] + dj), ()):
+                        if dist_km(lat, lon, a, b) <= GRILLE_MAX_KM_STATION:
+                            proche = True
+                            break
+                    if proche:
+                        break
+                if proche:
+                    break
+            if proche:
+                pts.append((round(lat, 3), round(lon, 3)))
+            lon += GRILLE_DLON
+        lat += GRILLE_DLAT
+    return pts
+
+
+def resumer_jour(heures, series, jour):
+    """Valeurs du jour : [pluie 8-18h, pluie 24h, vent max 8-18h, rafales max, soleil (h), t max,
+    direction du vent (d'où il vient, en degrés) moyenne pondérée par la vitesse entre 8 h et 18 h]."""
+    idx_jour = [k for k, h in enumerate(heures) if h.startswith(jour)]
+    idx_velo = [k for k in idx_jour if HEURE_DEBUT <= int(heures[k][11:13]) < HEURE_FIN]
+
+    def vals(nom, idx):
+        s = series.get(nom) or []
+        return [s[k] for k in idx if k < len(s) and s[k] is not None]
+
+    def somme(v, min_n):
+        return round(sum(v), 1) if len(v) >= min_n else None
+
+    def maxi(v):
+        return round(max(v)) if v else None
+
+    p_velo = somme(vals("precipitation", idx_velo), len(idx_velo) * 0.8)
+    p_24 = somme(vals("precipitation", idx_jour), len(idx_jour) * 0.8)
+    vent = maxi(vals("wind_speed_10m", idx_velo))
+    raf = maxi(vals("wind_gusts_10m", idx_velo))
+    sol = vals("sunshine_duration", idx_velo)
+    soleil = round(sum(sol) / 3600, 1) if len(sol) >= len(idx_velo) * 0.8 and idx_velo else None
+    tmax = vals("temperature_2m", idx_velo)
+    tmax = round(max(tmax)) if tmax else None
+    # direction moyenne (vecteur) pondérée par la vitesse
+    sx = sy = 0.0
+    sv = series.get("wind_speed_10m") or []
+    sd = series.get("wind_direction_10m") or []
+    for k in idx_velo:
+        if k < len(sv) and k < len(sd) and sv[k] is not None and sd[k] is not None:
+            sx += sv[k] * math.sin(math.radians(sd[k]))
+            sy += sv[k] * math.cos(math.radians(sd[k]))
+    direction = round(math.degrees(math.atan2(sx, sy)) % 360) if (sx or sy) else None
+    return [p_velo, p_24, vent, raf, soleil, tmax, direction]
+
+
+def previsions(stations):
+    info("2/3  Prévisions Open-Meteo…")
+    modeles = choisir_modeles()
+    info("     Modèles utilisés : " + ", ".join("%s (%s)" % m for m in modeles))
+    pts = grille(stations)
+    info("     %d points de grille sur la France, par lots de %d." % (len(pts), LOTS_OPENMETEO))
+
+    aujourd_hui = dt.date.today()
+    jours = [(aujourd_hui + dt.timedelta(days=k)).isoformat() for k in range(JOURS_PREVISION)]
+    jours_passes = [(aujourd_hui - dt.timedelta(days=JOURS_PASSES_MODELE - k)).isoformat() for k in range(JOURS_PASSES_MODELE)]
+    codes = [m[1] for m in modeles]
+    resultat = []          # [lat, lon, [ [jour0 m0], [jour0 m1] ], ...]
+    for debut in range(0, len(pts), LOTS_OPENMETEO):
+        lot = pts[debut:debut + LOTS_OPENMETEO]
+        if debut:
+            time.sleep(PAUSE_OPENMETEO)
+        reps = requete_openmeteo([p[0] for p in lot], [p[1] for p in lot], codes)
+        for (lat, lon), rep in zip(lot, reps):
+            h = rep.get("hourly") or {}
+            heures = h.get("time") or []
+            par_jour = []
+            for jour in jours:
+                ligne = []
+                for code in codes:
+                    series = {}
+                    for v in VARIABLES_HORAIRES:
+                        series[v] = h.get(v + "_" + code)
+                        if series[v] is None and len(codes) == 1:
+                            series[v] = h.get(v)
+                    ligne.append(resumer_jour(heures, series, jour))
+                par_jour.append(ligne)
+            # séries heure par heure (24 valeurs par jour, pour chaque modèle) :
+            # pluie (mm tombés dans l'heure qui précède), vent moyen, rafales, direction du vent
+            index_h = {t: k for k, t in enumerate(heures)}
+
+            def horaire(nom, dec):
+                res = []
+                for code in codes:
+                    serie = h.get(nom + "_" + code)
+                    if serie is None and len(codes) == 1:
+                        serie = h.get(nom)
+                    serie = serie or []
+                    vals = []
+                    for jour in jours:
+                        for hh in range(24):
+                            k = index_h.get("%sT%02d:00" % (jour, hh))
+                            v = serie[k] if k is not None and k < len(serie) else None
+                            vals.append(None if v is None else (round(v, dec) if dec else int(round(v))))
+                    res.append(vals)
+                return res
+            resultat.append([lat, lon, par_jour, horaire("precipitation", 1),
+                             horaire("wind_speed_10m", 0), horaire("wind_gusts_10m", 0),
+                             horaire("wind_direction_10m", 0),
+                             # pluie des derniers jours estimée par chaque modèle (24 h, minuit à minuit)
+                             [[resumer_jour(heures, {"precipitation": h.get("precipitation_" + c) or
+                                                     (h.get("precipitation") if len(codes) == 1 else None)}, j)[1]
+                               for j in jours_passes] for c in codes]])
+        info("     … %d/%d points" % (min(debut + LOTS_OPENMETEO, len(pts)), len(pts)))
+    return {"jours": jours, "jours_passes": jours_passes, "modeles": [m[0] for m in modeles], "codes": codes,
+            "dlat": GRILLE_DLAT, "dlon": GRILLE_DLON, "lat0": 41.30, "lon0": -5.20, "points": resultat,
+            "heures_velo": [HEURE_DEBUT, HEURE_FIN]}
+
+
+# ---------------------------------------------------------------- 3. carte
+def ecrire_carte(donnees):
+    info("3/3  Fabrication de la carte…")
+    with open(MODELE_HTML, encoding="utf-8") as f:
+        modele = f.read()
+    js = json.dumps(donnees, ensure_ascii=False, separators=(",", ":"))
+    html = modele.replace("/*__DONNEES__*/null", js)
+    os.makedirs(os.path.dirname(os.path.abspath(SORTIE_HTML)), exist_ok=True)
+    tmp = SORTIE_HTML + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(html)
+    os.replace(tmp, SORTIE_HTML)
+    info("     Carte écrite : %s (%.1f Mo)" % (SORTIE_HTML, os.path.getsize(SORTIE_HTML) / 1e6))
+    # copie pour le téléphone dans OneDrive (si OneDrive est installé sur ce PC)
+    if COPIE_ONEDRIVE and not EN_LIGNE:
+        onedrive = os.environ.get("OneDrive") or os.path.join(os.path.expanduser("~"), "OneDrive")
+        if os.path.isdir(onedrive):
+            try:
+                dossier = os.path.join(onedrive, "Meteo VTT")
+                os.makedirs(dossier, exist_ok=True)
+                import shutil
+                shutil.copyfile(SORTIE_HTML, os.path.join(dossier, "Carte meteo VTT.html"))
+                info("     Copie pour le téléphone : %s" % dossier)
+            except Exception as e:
+                info("     Copie OneDrive impossible : %s" % e)
+
+
+def main():
+    debut = time.time()
+    donnees = {"genere": dt.datetime.now().strftime("%Y-%m-%dT%H:%M"), "pluie": None,
+               "prevision": None, "alertes": []}
+    try:
+        donnees["pluie"] = pluie_mesuree()
+    except Exception as e:
+        info("     ERREUR pluie mesurée : %s" % e)
+        donnees["alertes"].append("Pluie mesurée indisponible : %s" % e)
+    stations = (donnees["pluie"] or {}).get("stations") or []
+    if not stations:
+        # Sans stations, on prend une grille grossière sur tout le rectangle France
+        stations = [[None, None, 41.4 + 0.5 * i, -5.0 + 0.5 * j] for i in range(20) for j in range(30)]
+    try:
+        donnees["prevision"] = previsions(stations)
+    except Exception as e:
+        info("     ERREUR prévisions : %s" % e)
+        donnees["alertes"].append("Prévisions indisponibles : %s" % e)
+    ecrire_carte(donnees)
+    info("Terminé en %d s." % (time.time() - debut))
+    if "--sans-ouvrir" not in sys.argv and not EN_LIGNE:
+        webbrowser.open("file:///" + SORTIE_HTML.replace("\\", "/"))
+    return 0 if not donnees["alertes"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
