@@ -67,8 +67,19 @@ def info(msg):
     print(msg, flush=True)
 
 
-def http_get(url, entetes=None, timeout=60):
-    """Renvoie (code, contenu_bytes, entetes_reponse). Lève une exception sur erreur réseau."""
+def http_get(url, entetes=None, timeout=60, essais=3):
+    """Renvoie (code, contenu_bytes, entetes_reponse). Réessaie sur coupure réseau,
+    puis lève l'exception si ça ne passe toujours pas."""
+    for n in range(essais):
+        try:
+            return _http_get(url, entetes, timeout)
+        except (urllib.error.URLError, OSError) as e:
+            if n == essais - 1:
+                raise
+            time.sleep(5 * (n + 1) ** 2)
+
+
+def _http_get(url, entetes=None, timeout=60):
     h = {"User-Agent": UA}
     if entetes:
         h.update(entetes)
@@ -108,7 +119,25 @@ RE_TITRE = re.compile(r"departement_([0-9AB]{2,3})_periode_(\d{4})-(\d{4})_RR-T-
 
 
 def lister_fichiers_quotidiens():
-    """Liste des fichiers « RR-T-Vent » les plus récents, un par département de métropole."""
+    """Liste des fichiers « RR-T-Vent » les plus récents, un par département de métropole.
+    En cas de panne de data.gouv.fr, reprend la dernière liste connue."""
+    chemin = os.path.join(CACHE, "liste_fichiers.json")
+    try:
+        liste = _lister_fichiers_quotidiens()
+        if liste:
+            os.makedirs(CACHE, exist_ok=True)
+            with open(chemin, "w", encoding="utf-8") as f:
+                json.dump(liste, f)
+        return liste
+    except Exception as e:
+        if os.path.exists(chemin):
+            info("     data.gouv.fr ne répond pas (%s) : j'utilise la dernière liste connue." % str(e)[:80])
+            with open(chemin, encoding="utf-8") as f:
+                return json.load(f)
+        raise
+
+
+def _lister_fichiers_quotidiens():
     ressources = []
     page = 1
     while page < 30:
@@ -156,7 +185,12 @@ def telecharger_avec_cache(dep, url):
             entetes["If-None-Match"] = meta["etag"]
         if meta.get("last_modified"):
             entetes["If-Modified-Since"] = meta["last_modified"]
-    code, corps, rep = http_get(url, entetes, timeout=120)
+    try:
+        code, corps, rep = http_get(url, entetes, timeout=120)
+    except Exception:
+        if os.path.exists(chemin):
+            return chemin, False      # panne réseau : on garde la version précédente
+        raise
     if code == 304:
         return chemin, False
     if code != 200:
@@ -278,7 +312,7 @@ def requete_openmeteo(lats, lons, modeles):
     url = URL_OM + "?" + urllib.parse.urlencode(params, safe=",")
     for essai in range(5):
         try:
-            code, corps, _ = http_get(url, timeout=90)
+            code, corps, _ = http_get(url, timeout=60, essais=1)
         except Exception as e:      # coupure réseau, délai dépassé… : on réessaie
             attente = 10 * (essai + 1)
             info("     Connexion à Open-Meteo interrompue (%s), nouvel essai dans %d s…" % (str(e)[:80], attente))
@@ -313,7 +347,17 @@ def choisir_modeles():
 
 
 def grille(stations):
-    """Points de grille à moins de GRILLE_MAX_KM_STATION d'une station (≈ terre ferme)."""
+    """Points de grille sur la France. On prend la grille fixe « grille.json » si elle existe
+    (toujours la même, même si les stations manquent), sinon les points proches d'une station."""
+    fixe = os.path.join(DOSSIER, "grille.json")
+    if os.path.exists(fixe):
+        try:
+            with open(fixe, encoding="utf-8") as f:
+                g = json.load(f)
+            if abs(g.get("dlat", 0) - GRILLE_DLAT) < 1e-9 and abs(g.get("dlon", 0) - GRILLE_DLON) < 1e-9:
+                return [tuple(p) for p in g["points"]]
+        except Exception as e:
+            info("     grille.json illisible (%s), je recalcule la grille." % e)
     seau = {}
     for s in stations:
         seau.setdefault((int(s[2] * 4), int(s[3] * 4)), []).append((s[2], s[3]))

@@ -14,6 +14,7 @@ on:
       - 'meteo_vtt.py'
       - 'modele_carte.html'
       - 'web/**'
+      - 'grille.json'
       - '.github/workflows/**'
 
 permissions:
@@ -28,12 +29,20 @@ concurrency:
 jobs:
   carte:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     environment:
       name: github-pages
       url: ${{ steps.deploiement.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
+
+      # garde les fichiers Météo-France d'une fois sur l'autre (et sert de secours si data.gouv.fr est en panne)
+      - name: Cache des fichiers Météo-France
+        uses: actions/cache@v5
+        with:
+          path: cache
+          key: meteo-cache-${{ github.run_id }}
+          restore-keys: meteo-cache-
 
       - name: Fabriquer la carte
         env:
