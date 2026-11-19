@@ -51,6 +51,15 @@
   .leaflet-popup-content .cumuls div { background: #f3efe8; border-radius: 5px; padding: 3px 7px; }
   .leaflet-popup-content .cumuls b { font-size: 15px; }
   .ecart { color: #a05a00; font-weight: 600; }
+  .hb-titre { font-weight: 600; margin: 8px 0 2px; }
+  .hb { display: flex; align-items: flex-end; gap: 3px; border-bottom: 1px solid #c9ccc8; padding-top: 4px; }
+  .hb-col { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 24px; }
+  .hb-val { font-size: 10.5px; color: #333; margin-bottom: 1px; }
+  .hb-barre { width: 70%; border-radius: 2px 2px 0 0; }
+  .hb-bas { border-bottom: none; align-items: flex-start; padding-top: 2px; }
+  .hb-jour { flex: 1; min-width: 24px; font-size: 10px; color: #5b6670; text-align: center; line-height: 1.15; }
+  .hb-leg { display: flex; gap: 10px; font-size: 11px; color: #4b5560; margin: 6px 0 3px; }
+  .hb-leg i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
   /* barre des jours en bas de la carte, façon Meteoblue */
   #barreJours { position: absolute; left: 50%; transform: translateX(-50%); bottom: 18px; z-index: 1000; display: flex; gap: 0;
     background: rgba(30, 38, 46, .88); border-radius: 8px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,.25); }
@@ -108,7 +117,8 @@
     #barreHeures button { width: 34px; height: 32px; }
     #legVert { top: 92px; transform: scale(.72); transform-origin: top left; }
     .popup-ouverte #legVert { display: none !important; }
-    .leaflet-popup-content { max-width: 84vw; overflow-x: auto; font-size: 12px; }
+    .leaflet-popup-content { max-width: 84vw; overflow-x: auto; font-size: 12px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+    .leaflet-popup-scrolled { border: none; }
     #survol { display: none !important; }
     .leaflet-control-layers-expanded { font-size: 12px; }
   }
@@ -397,10 +407,11 @@ function criteresOu(n) {
   const { debut, fin } = SORTIE, base = etat.jour * 24;
   const serie = (k) => pt[k] && pt[k][m] ? pt[k][m] : null;
   const sP = serie(3), sV = serie(4), sR = serie(5);
+  let avantDepart = sP ? 0 : null;
   let pluie = null, vent = null, raf = null;
   if (sP) {
     // pluie tombée depuis minuit jusqu'au départ : compte pour la boue
-    for (let h = 1; h <= debut; h++) { const v = sP[base + h]; if (v) boue += v; }
+    for (let h = 1; h <= debut; h++) { const v = sP[base + h]; if (v) { boue += v; avantDepart += v; } }
     let tot = 0, n = 0;
     for (let h = debut + 1; h <= fin; h++) { const v = sP[base + h]; if (v !== null && v !== undefined) { tot += v; n++; } }
     pluie = n >= (fin - debut) * 0.8 ? tot : null;
@@ -411,7 +422,7 @@ function criteresOu(n) {
   const j = pt[2][etat.jour] && pt[2][etat.jour][m];
   if (pluie === null && !sP && j) pluie = j[0];
   if (vent === null && !sV && j) { vent = j[2]; raf = j[3]; }
-  return { boue, pluie, vent, raf, ventIdx: (vent === null || raf === null) ? null : vent + 0.5 * raf, detail };
+  return { boue, pluie, vent, raf, ventIdx: (vent === null || raf === null) ? null : vent + 0.5 * raf, detail, avantDepart };
 }
 // rang relatif 0 (le meilleur) … 1 (le pire), ex aequo moyennés
 function rangs(valeurs) {
@@ -664,12 +675,32 @@ function blocCumuls(s) {
     return `<div>${n} j : <b>${fmt(c.somme, 1)}</b> mm${c.manque ? ` <span class="petit">(${c.manque} j manquant${c.manque > 1 ? 's' : ''})</span>` : ''}</div>`;
   }).join('') + `</div>`;
 }
+// petit graphique en bâtons de la pluie avant la sortie (pour « Où rouler ? »)
+const COUL_SOURCE = { 'mesurée': '#a06a2c', 'modèle': '#8f99a3', 'prévue': '#4f74f0' };
+function histoBoue(c, jourSortie) {
+  const jours = c.detail.slice().reverse().map(([x, v, src]) => {
+    const d = new Date(x * 864e5), a = Math.round(jourNum(F.jours[etat.jour]) - x);
+    return { lab: JOURS_SEM[d.getUTCDay()].replace('.', ''), num: d.getUTCDate(), v, src, poids: Math.pow(0.5, (a - 1) / 3) };
+  });
+  if (c.avantDepart !== null && c.avantDepart !== undefined)
+    jours.push({ lab: 'matin', num: '0–' + SORTIE.debut + 'h', v: c.avantDepart, src: 'prévue', poids: 1 });
+  const max = Math.max(3, ...jours.map(j => j.v || 0)), H = 64;
+  const col = j => `<div class="hb-col" title="${fmt(j.v, 1)} mm (${j.src})">
+      <div class="hb-val">${j.v >= 0.05 ? fmt(j.v, 1) : '0'}</div>
+      <div class="hb-barre" style="height:${Math.max(2, j.v / max * H)}px;background:${COUL_SOURCE[j.src]};opacity:${(0.35 + 0.65 * j.poids).toFixed(2)}"></div>
+      </div>`;
+  return `<div class="hb-titre">Pluie avant ta sortie du ${fmtJour(jourSortie, true)} (mm)</div>
+    <div class="hb">${jours.map(col).join('')}</div>
+    <div class="hb hb-bas">${jours.map(j => `<div class="hb-jour">${j.lab}<br>${j.num}</div>`).join('')}</div>
+    <div class="hb-leg">${Object.entries(COUL_SOURCE).map(([k, v]) => `<span><i style="background:${v}"></i>${k}</span>`).join('')}</div>
+    <div class="petit">Plus le bâton est pâle, moins le jour compte : le poids est divisé par 2 tous les 3 jours. Total pondéré : <b>${fmt(c.boue, 1)} mm</b>.</div>`;
+}
 function ouvrirStation(s, ll) {
   const fin = dCompact(P.jours[P.jours.length - 1]);
   const html = `<h3>${s[1]}</h3><div class="petit">Station Météo-France ${s[0]} · ${s[4] ?? '?'} m · dép. ${s[5]}</div>` +
     blocCumuls(s) + `<div class="petit">Jusqu'au ${fmtJour(fin, true)} inclus (journée climatologique Météo-France).</div>` +
     tableauPluie(s);
-  L.popup({ maxWidth: Math.min(360, window.innerWidth * 0.86), autoPanPaddingTopLeft: [10, 80], autoPanPaddingBottomRight: [10, 130] }).setLatLng(ll).setContent(html).openOn(carte);
+  L.popup({ maxWidth: Math.min(360, window.innerWidth * 0.86), maxHeight: Math.round(window.innerHeight * (window.innerWidth <= 820 ? 0.58 : 0.8)), autoPanPaddingTopLeft: [10, 80], autoPanPaddingBottomRight: [10, 130] }).setLatLng(ll).setContent(html).openOn(carte);
 }
 function plusProche(liste, lat, lon, f) {
   let best = null, dmin = Infinity;
@@ -696,9 +727,7 @@ carte.on('click', e => {
           `<tr><td>Boue (pluie passée pondérée)</td><td>${fmt(c.boue, 1)} mm</td><td>${pc(ou.rb[n])}</td></tr>` +
           `<tr><td>Pluie de ${SORTIE.debut} h à ${SORTIE.fin} h</td><td>${fmt(c.pluie, 1)} mm</td><td>${pc(ou.rp[n])}</td></tr>` +
           `<tr><td>Vent / rafales max (${SORTIE.debut} h – ${SORTIE.fin} h)</td><td>${fmt(c.vent)} / ${fmt(c.raf)} km/h</td><td>${pc(ou.rv[n])}</td></tr></table>` +
-          `<div class="petit">Pluie des jours précédents : ` + c.detail.slice().reverse().map(([x, v, src]) => {
-            const d = new Date(x * 864e5); return `${d.getUTCDate()}/${d.getUTCMonth() + 1} ${fmt(v, 1)} (${src})`; }).join(', ') +
-          `. Les jours les plus récents comptent le plus (poids divisé par 2 tous les 3 jours).</div><br>`;
+          histoBoue(c, dIso(F.jours[etat.jour])) + `<br>`;
       }
       html += `<h3>Prévisions</h3>`;
       html += `<table><tr><th>Jour</th><th>Modèle</th><th>Pluie de jour</th><th>Pluie 24 h</th><th>Vent</th><th>Rafales</th><th>Soleil</th><th>T°</th></tr>`;
@@ -741,7 +770,7 @@ carte.on('click', e => {
       html += `<h3 style="margin-top:10px">Pluie tombée : ${ps.s[1]}</h3><div class="petit">Station la plus proche, à ${Math.round(ds)} km · ${ps.s[4] ?? '?'} m</div>` + blocCumuls(ps.s);
     }
   }
-  if (html) L.popup({ maxWidth: Math.min(560, window.innerWidth * 0.86), autoPanPaddingTopLeft: [10, 80], autoPanPaddingBottomRight: [10, 130] }).setLatLng(e.latlng).setContent(html).openOn(carte);
+  if (html) L.popup({ maxWidth: Math.min(560, window.innerWidth * 0.86), maxHeight: Math.round(window.innerHeight * (window.innerWidth <= 820 ? 0.58 : 0.8)), autoPanPaddingTopLeft: [10, 80], autoPanPaddingBottomRight: [10, 130] }).setLatLng(e.latlng).setContent(html).openOn(carte);
 });
 
 // ------------------------------------------------------------------ panneau
