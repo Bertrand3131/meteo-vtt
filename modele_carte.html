@@ -250,26 +250,30 @@ const varCourante = () => VARS.find(v => v.id === etat.variable);
 function sauver() { try { localStorage.setItem('meteoVTT', JSON.stringify({ nPluie: etat.nPluie, variable: etat.variable, modele: etat.modele, heure: etat.heure, v2: 1 })); } catch (e) {} }
 
 const P = D && D.pluie, F = D && D.prevision;
+// grille fine (≈ 9 km, Météo-France) ajoutée à la suite des points de la grille normale
+if (F) {
+  F.points.forEach(p => { p.fin = false; });
+  if (F.fin && F.fin.points) F.fin.points.forEach(p => { p.fin = true; F.points.push(p); });
+}
 
 // jour par défaut : le prochain samedi s'il est dans la prévision, sinon demain
 if (F) {
   const iSam = F.jours.findIndex(j => dIso(j).getDay() === 6);
   etat.jour = iSam >= 0 ? iSam : Math.min(1, F.jours.length - 1);
 }
-const AUTO = 99;   // Météo-France (AROME) pour aujourd'hui et demain, ECMWF au-delà
-try { if (!JSON.parse(localStorage.getItem('meteoVTT') || '{}').v2) etat.modele = AUTO; } catch (e) { etat.modele = AUTO; }
-if (F && etat.modele !== AUTO && (etat.modele > F.modeles.length || etat.modele < -1)) etat.modele = AUTO;
+const AUTO = 99;   // un seul modèle : Météo-France tant qu'il a des données, ECMWF pour les jours suivants
+if (F && etat.modele !== -1) etat.modele = AUTO;
 const iMF = F ? F.modeles.indexOf('Météo-France') : -1;
+const iECMWF0 = F ? Math.max(0, F.modeles.indexOf('ECMWF')) : 0;
+const cacheModeleJour = {};
 function modeleDuJour(k) {
-  const iE = Math.max(0, F.modeles.indexOf('ECMWF'));
-  if (iMF >= 0 && k <= 1) {
-    const ok = F.points.some(p => p[2][k] && p[2][k][iMF] && p[2][k][iMF][0] !== null);
-    if (ok) return iMF;
-  }
-  return iE;
+  if (k in cacheModeleJour) return cacheModeleJour[k];
+  let m = iECMWF0;
+  if (iMF >= 0 && F.points.some(p => !p.fin && p[2][k] && p[2][k][iMF] && p[2][k][iMF][0] !== null)) m = iMF;
+  return (cacheModeleJour[k] = m);
 }
-function nomModele() { const m = F.modeles[varCourante().special ? modeleDuJour(etat.jour) : mSel()]; return etat.modele === AUTO || varCourante().special ? `${m} (auto : Météo-France aujourd'hui et demain, ECMWF ensuite)` : m; }
-function mSel() { return etat.modele === AUTO ? modeleDuJour(etat.jour) : etat.modele; }
+function nomModele() { const m = modeleDuJour(etat.jour); return m === iMF ? 'Météo-France' : F.modeles[m] + (iMF >= 0 ? " (Météo-France ne prévoit pas jusqu'à ce jour)" : ''); }
+function mSel() { return etat.modele < 0 ? -1 : modeleDuJour(etat.jour); }
 
 // ------------------------------------------------------------------ en-tête
 (function () {
@@ -369,17 +373,17 @@ function cumul(valeurs, n) {
 
 // ------------------------------------------------------------------ dessin : prévision
 let cellules = [];
-function valeurBrute(pt, m) {
+function valeurBrute(pt, m) {   // pas de repli pour les points fins : sans Météo-France, la grille normale prend le relais
   if (varCourante().horaire) {
     const h = pt[varCourante().horaire] && pt[varCourante().horaire][m];
     return h ? h[etat.jour * 24 + etat.heure] : null;
   }
-  const j = pt[2][etat.jour];
-  return j && j[m] ? j[m][etat.variable] : null;
+  const j = pt[2][etat.jour] && pt[2][etat.jour][m];
+  return j ? j[etat.variable] : null;
 }
 function valeurCellule(pt) {
-  if (varCourante().special) return ou ? ou.score[pt.__i] : null;
-  if (mSel() < F.modeles.length) return valeurBrute(pt, mSel());
+  if (varCourante().special) return (!pt.fin || (pt[2][etat.jour] && pt[2][etat.jour][modeleDuJour(etat.jour)])) ? 0 : null;   // remplacé par le classement
+  if (mSel() >= 0) return valeurBrute(pt, mSel());
   const a = valeurBrute(pt, 0), b = valeurBrute(pt, 1);
   return (a === null || b === null || a === undefined || b === undefined) ? null : Math.abs(a - b);
 }
@@ -433,7 +437,7 @@ function criteresOu(n) {
   }
   // le jour de la sortie : chaque valeur horaire « h » = pluie tombée de h-1 à h
   const { debut, fin } = SORTIE, base = etat.jour * 24;
-  const serie = (k) => pt[k] && pt[k][m] ? pt[k][m] : null;
+  const serie = (k) => serieHoraire(pt, k, m) || null;
   const sP = serie(3), sV = serie(4), sR = serie(5);
   let avantDepart = sP ? 0 : null;
   let pluie = null, vent = null, raf = null;
@@ -451,6 +455,22 @@ function criteresOu(n) {
   if (pluie === null && !sP && j) pluie = j[0];
   if (vent === null && !sV && j) { vent = j[2]; raf = j[3]; }
   return { boue, pluie, vent, raf, ventIdx: (vent === null || raf === null) ? null : vent + 0.5 * raf, detail, avantDepart };
+}
+// rang relatif pondéré : part de la surface qui fait mieux (0 = le meilleur, 1 = le pire), ex aequo moyennés
+function rangsPonderes(valeurs, poids) {
+  const idx = valeurs.map((v, i) => [v, i]).filter(x => x[0] !== null && x[0] !== undefined && !isNaN(x[0])).sort((a, b) => a[0] - b[0]);
+  const r = new Array(valeurs.length).fill(null);
+  const tot = idx.reduce((t, x) => t + poids[x[1]], 0);
+  if (!tot) return r;
+  let cumul = 0;
+  for (let i = 0; i < idx.length;) {
+    let j = i, w = 0; while (j + 1 < idx.length && idx[j + 1][0] === idx[i][0]) j++;
+    for (let k = i; k <= j; k++) w += poids[idx[k][1]];
+    const rang = idx.length > 1 ? Math.min(1, (cumul + w / 2) / tot) : 0;
+    for (let k = i; k <= j; k++) r[idx[k][1]] = rang;
+    cumul += w; i = j + 1;
+  }
+  return r;
 }
 // rang relatif 0 (le meilleur) … 1 (le pire), ex aequo moyennés
 function rangs(valeurs) {
@@ -574,7 +594,17 @@ function dansZone(i) {
 }
 
 function calculerOu() {
-  const crit = F.points.map((_, n) => dansZone(n) ? criteresOu(n) : { boue: null, pluie: null, ventIdx: null, detail: [] });
+  const vide = { boue: null, pluie: null, ventIdx: null, detail: [] };
+  // un point fin sans valeur ce jour-là (jour sans Météo-France) est exclu ; un point normal couvert par la grille fine aussi
+  const crit = F.points.map((p, n) => {
+    if (!dansZone(n)) return vide;
+    if (p.fin && !(p[2][etat.jour] && p[2][etat.jour][modeleDuJour(etat.jour)])) return vide;
+    return criteresOu(n);
+  });
+  // chaque point compte pour la surface qu'il représente (un point normal ≈ 9 points fins)
+  // (un point normal couvert par la grille fine reçoit un rang mais ne pèse rien : il ne sert qu'à boucher les trous de l'image)
+  const poids = F.points.map((p, n) => p.fin ? 1 : couvert(n) ? 0 : (Gf ? 9 : 1));
+  const rangs = (vals) => rangsPonderes(vals, poids);
   const rb = rangs(crit.map(c => c.boue)), rp = rangs(crit.map(c => c.pluie)), rv = rangs(crit.map(c => c.ventIdx));
   const W = POIDS.boue + POIDS.pluie + POIDS.vent || 1;
   const comb = crit.map((c, i) => (rb[i] === null || rp[i] === null || rv[i] === null) ? null :
@@ -583,70 +613,122 @@ function calculerOu() {
   ou = { score: rf.map(r => r === null ? null : Math.round(100 * (1 - r))), crit, rb, rp, rv };
 }
 
-// index de la grille régulière
+// index des grilles régulières (normale ≈ 28 km, fine ≈ 9 km)
 if (F) F.points.forEach((p, i) => { p.__i = i; });
-const G = F ? (() => {
-  const lat0 = F.lat0 ?? 41.30, lon0 = F.lon0 ?? -5.20;
-  let ni = 0, nj = 0;
-  const pos = F.points.map(p => {
-    const i = Math.round((p[0] - lat0) / F.dlat), j = Math.round((p[1] - lon0) / F.dlon);
-    ni = Math.max(ni, i + 1); nj = Math.max(nj, j + 1); return [i, j];
+function faireGrille(lat0, lon0, dlat, dlon, garder) {
+  const brut = [];
+  F.points.forEach((p, n) => { if (garder(p)) brut.push([n, Math.round((p[0] - lat0) / dlat), Math.round((p[1] - lon0) / dlon)]); });
+  if (!brut.length) return null;
+  const imin = Math.min(...brut.map(b => b[1])), jmin = Math.min(...brut.map(b => b[2]));
+  const ni = Math.max(...brut.map(b => b[1])) - imin + 1, nj = Math.max(...brut.map(b => b[2])) - jmin + 1;
+  const k = new Int32Array(ni * nj).fill(-1), pos = new Map();
+  for (const [n, i, j] of brut) { k[(i - imin) * nj + (j - jmin)] = n; pos.set(n, [i - imin, j - jmin]); }
+  return { lat0: lat0 + imin * dlat, lon0: lon0 + jmin * dlon, dlat, dlon, ni, nj, k, pos, vals: null };
+}
+const G = F ? faireGrille(F.lat0 ?? 41.30, F.lon0 ?? -5.20, F.dlat, F.dlon, p => !p.fin) : null;
+const Gf = (F && F.fin) ? faireGrille(F.fin.lat0, F.fin.lon0, F.fin.dlat, F.fin.dlon, p => p.fin) : null;
+// pour chaque point normal : le point fin au même endroit ; pour chaque point fin : le point normal le plus proche
+if (Gf) {
+  const cle = p => p[0].toFixed(3) + ',' + p[1].toFixed(3);
+  const fins = new Map();
+  F.points.forEach((p, n) => { if (p.fin) fins.set(cle(p), n); });
+  F.points.forEach((p, n) => { if (!p.fin && fins.has(cle(p))) p.__fin = fins.get(cle(p)); });
+  F.points.forEach(p => {
+    if (!p.fin) return;
+    const i = Math.round((p[0] - G.lat0) / G.dlat), j = Math.round((p[1] - G.lon0) / G.dlon);
+    let best = -1, dm = Infinity;
+    for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
+      const ii = i + di, jj = j + dj; if (ii < 0 || jj < 0 || ii >= G.ni || jj >= G.nj) continue;
+      const n = G.k[ii * G.nj + jj]; if (n < 0) continue;
+      const q = F.points[n], d = Math.hypot(q[0] - p[0], (q[1] - p[1]) * 0.72);
+      if (d < dm) { dm = d; best = n; }
+    }
+    p.__c = best;
   });
-  const k = new Int32Array(ni * nj).fill(-1);
-  pos.forEach(([i, j], n) => { k[i * nj + j] = n; });
-  return { lat0, lon0, ni, nj, k, pos };
-})() : null;
-let grilleVal = null;   // valeurs du réglage actuel, NaN si absent
-// interpolation bilinéaire : [valeur, poids des points disponibles 0-1]
-function interpoler(lat, lon) {
-  if (!grilleVal) return [NaN, 0];
-  const fi = (lat - G.lat0) / F.dlat, fj = (lon - G.lon0) / F.dlon;
+}
+// valeur d'un point fin, ou à défaut celle du point normal voisin (jours sans Météo-France, etc.)
+function serieJour(pt, k, m) { const v = pt[2][k] && pt[2][k][m]; if (v || !pt.fin || pt.__c < 0) return v; const q = F.points[pt.__c]; return q && q[2][k] && q[2][k][m]; }
+function serieHoraire(pt, idx, m) { const v = pt[idx] && pt[idx][m]; if (v || !pt.fin || pt.__c < 0) return v; const q = F.points[pt.__c]; return q && q[idx] && q[idx][m]; }
+// un point normal est « couvert » quand le point fin au même endroit a une valeur
+function couvert(n) {
+  const p = F.points[n];
+  if (p.fin || p.__fin === undefined || !Gf || !Gf.vals) return false;
+  const ij = Gf.pos.get(p.__fin);
+  return !!ij && !isNaN(Gf.vals[ij[0] * Gf.nj + ij[1]]);
+}
+let grilleVal = null;   // gardé pour compatibilité
+// interpolation bilinéaire dans une grille : [valeur, poids des points disponibles 0-1]
+function interpolerGrille(g, lat, lon) {
+  if (!g || !g.vals) return [NaN, 0];
+  const fi = (lat - g.lat0) / g.dlat, fj = (lon - g.lon0) / g.dlon;
   const i0 = Math.floor(fi), j0 = Math.floor(fj), di = fi - i0, dj = fj - j0;
   let sv = 0, sw = 0;
   for (const [i, j, w] of [[i0, j0, (1 - di) * (1 - dj)], [i0 + 1, j0, di * (1 - dj)], [i0, j0 + 1, (1 - di) * dj], [i0 + 1, j0 + 1, di * dj]]) {
-    if (i < 0 || j < 0 || i >= G.ni || j >= G.nj) continue;
-    const v = grilleVal[i * G.nj + j];
+    if (i < 0 || j < 0 || i >= g.ni || j >= g.nj) continue;
+    const v = g.vals[i * g.nj + j];
     if (!isNaN(v)) { sv += v * w; sw += w; }
   }
   return sw > 0 ? [sv / sw, sw] : [NaN, 0];
 }
+const fondu = w => Math.max(0, Math.min(1, (w - 0.3) / 0.35));
+// valeur en un lieu : la grille fine d'abord, la grille normale sinon
+function interpoler(lat, lon) {
+  const [vf, wf] = interpolerGrille(Gf, lat, lon);
+  if (!isNaN(vf) && wf >= 0.5) return [vf, 1];
+  return interpolerGrille(G, lat, lon);
+}
 const merc = lat => Math.log(Math.tan(Math.PI / 4 + lat * Math.PI / 360));
 const demerc = y => (2 * Math.atan(Math.exp(y)) - Math.PI / 2) * 180 / Math.PI;
-let imageGrille = null;
 function dessinerGrille() {
   coucheGrille.clearLayers(); cellules = []; grilleVal = null;
+  if (G) G.vals = null; if (Gf) Gf.vals = null;
   if (!F || mSel() < 0) return;
   const v = varCourante();
-  if (v.special) calculerOu();
-  const pal = (v.special || mSel() < F.modeles.length) ? PAL[v.pal] : PAL.ecart;
-  grilleVal = new Float32Array(G.ni * G.nj).fill(NaN);
+  const pal = PAL[v.pal];
+  for (const g of [G, Gf]) if (g) g.vals = new Float32Array(g.ni * g.nj).fill(NaN);
+  const valeurs = F.points.map(pt => valeurCellule(pt));
   F.points.forEach((pt, n) => {
-    const val = valeurCellule(pt);
-    if (val === null || val === undefined) return;
-    grilleVal[G.pos[n][0] * G.nj + G.pos[n][1]] = val;
-    cellules.push({ pt, val, colore: !!couleur(pal, val) });
+    const val = valeurs[n]; if (val === null || val === undefined) return;
+    const g = pt.fin ? Gf : G, ij = g && g.pos.get(n);
+    if (ij) g.vals[ij[0] * g.nj + ij[1]] = val;
   });
-  // image lissée (projection Mercator respectée ligne par ligne)
-  const S = 8, W = G.nj * S, H = G.ni * S;
-  const sud = G.lat0 - F.dlat / 2, nord = G.lat0 + (G.ni - 0.5) * F.dlat;
-  const ouest = G.lon0 - F.dlon / 2, est = G.lon0 + (G.nj - 0.5) * F.dlon;
-  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
-  const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
-  const yN = merc(nord), yS = merc(sud);
-  for (let y = 0; y < H; y++) {
-    const lat = demerc(yN + (yS - yN) * (y + 0.5) / H);
-    for (let x = 0; x < W; x++) {
-      const lon = ouest + (est - ouest) * (x + 0.5) / W;
-      const [val, w] = interpoler(lat, lon);
-      if (isNaN(val) || w < 0.3) continue;
-      const c = couleurContinue(pal, val);
-      const o = (y * W + x) * 4;
-      img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2];
-      img.data[o + 3] = 255 * c[3] * Math.min(1, (w - 0.3) / 0.35);   // bords adoucis
+  if (v.special) calculerOu();   // après le remplissage, pour savoir quels points sont couverts par la grille fine
+  if (v.special) F.points.forEach((pt, n) => {   // le classement remplace les valeurs
+    const g = pt.fin ? Gf : G, ij = g && g.pos.get(n); if (!ij) return;
+    const sc = ou.score[n]; g.vals[ij[0] * g.nj + ij[1]] = sc === null ? NaN : sc;
+  });
+  F.points.forEach((pt, n) => {
+    const val = v.special ? ou.score[n] : valeurs[n];
+    if (val === null || val === undefined || isNaN(val)) return;
+    cellules.push({ pt, val, colore: !!couleur(pal, val), couv: couvert(n) });
+  });
+  // une image lissée par grille (projection Mercator respectée ligne par ligne) ;
+  // sous la grille fine, l'image normale s'efface progressivement
+  const image = (g, S, masque) => {
+    const W = g.nj * S, H = g.ni * S;
+    const sud = g.lat0 - g.dlat / 2, nord = g.lat0 + (g.ni - 0.5) * g.dlat;
+    const ouest = g.lon0 - g.dlon / 2, est = g.lon0 + (g.nj - 0.5) * g.dlon;
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const ctx = cv.getContext('2d'), img = ctx.createImageData(W, H);
+    const yN = merc(nord), yS = merc(sud);
+    for (let y = 0; y < H; y++) {
+      const lat = demerc(yN + (yS - yN) * (y + 0.5) / H);
+      for (let x = 0; x < W; x++) {
+        const lon = ouest + (est - ouest) * (x + 0.5) / W;
+        const [val, w] = interpolerGrille(g, lat, lon);
+        if (isNaN(val) || w < 0.3) continue;
+        let a = fondu(w);
+        if (masque) { const [vf, wf] = interpolerGrille(Gf, lat, lon); if (!isNaN(vf)) a *= 1 - fondu(wf); if (a <= 0.01) continue; }
+        const c = couleurContinue(pal, val);
+        const o = (y * W + x) * 4;
+        img.data[o] = c[0]; img.data[o + 1] = c[1]; img.data[o + 2] = c[2]; img.data[o + 3] = 255 * c[3] * a;
+      }
     }
-  }
-  ctx.putImageData(img, 0, 0);
-  coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: 0.66, interactive: false }));
+    ctx.putImageData(img, 0, 0);
+    coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: 0.66, interactive: false }));
+  };
+  if (G) image(G, 8, !!Gf);
+  if (Gf) image(Gf, 6, false);
 }
 
 // flèches de vent (direction d'où vient le vent -> la flèche montre où il va)
@@ -655,7 +737,8 @@ function dessinerFleches() {
   if (!F || mSel() < 0 || mSel() >= F.modeles.length || (etat.variable !== 2 && etat.variable !== 3)) return;
   const z = carte.getZoom(), pas = z <= 6 ? 2 : 1, b = carte.getBounds().pad(0.05);
   F.points.forEach((pt, n) => {
-    const [i, j] = G.pos[n];
+    if (pt.fin) return;   // flèches sur la grille normale seulement
+    const [i, j] = G.pos.get(n);
     if (i % pas || j % pas) return;
     const dirs = pt[6] && pt[6][mSel()];
     const dir = dirs ? dirs[etat.jour * 24 + etat.heure] : null;
@@ -674,7 +757,7 @@ carte.on('mousemove', e => {
   const t = e.originalEvent && e.originalEvent.target;
   if ((t && t.closest && t.closest('.leaflet-popup')) || !F || mSel() < 0 || isNaN(val) || w < 0.3) { el.style.display = 'none'; return; }
   const v = varCourante();
-  const ecart = mSel() >= F.modeles.length && !v.special;
+  const ecart = false;
   const unite = { pluie: ' mm', vent: ' km/h', soleil: ' h', temp: ' °C' }[v.pal];
   el.textContent = v.special ? `mieux que ${Math.round(val)} % ${ZONE.actif && ZONE.durees ? 'de ta zone' : 'de la France'}` : (ecart ? 'écart ' : '') + fmt(val, ecart ? 1 : v.dec) + unite;
   el.style.left = (e.containerPoint.x + 14) + 'px'; el.style.top = (e.containerPoint.y - 10) + 'px';
@@ -714,7 +797,8 @@ function dessinerEtiquettes() {
     const dec = mSel() < F.modeles.length ? v.dec : 0;
     for (const c of cellules) {
       if (!b.contains([c.pt[0], c.pt[1]])) continue;
-      if (!c.colore) continue;   // case sans couleur (sec / modèles d'accord) : pas de chiffre
+      if (!c.colore) continue;   // case sans couleur (sec) : pas de chiffre
+      if (z >= 10 ? c.couv : c.pt.fin) continue;   // chiffres de la grille fine à partir du zoom 10
       coucheEtiquettes.addLayer(L.marker([c.pt[0], c.pt[1]], {
         interactive: false, icon: L.divIcon({ className: 'etiquette', html: fmt(c.val, dec), iconSize: [40, 14], iconAnchor: [20, 7] })
       }));
@@ -788,7 +872,7 @@ carte.on('click', e => {
   const { lat, lng } = e.latlng;
   let html = '';
   if (F) {
-    const [pt, d] = plusProche(F.points, lat, lng, p => [p[0], p[1]]);
+    const [pt, d] = plusProche(F.points.filter((p, n) => !couvert(n)), lat, lng, p => [p[0], p[1]]);
     if (pt && d < 40) {
       if (varCourante().special && ou) {
         const n = pt.__i, c = ou.crit[n], pc = r => r === null ? '—' : Math.round(100 * (1 - r)) + ' %';
@@ -802,20 +886,16 @@ carte.on('click', e => {
           histoBoue(c, dIso(F.jours[etat.jour])) + `<br>`;
       }
       html += `<h3>Prévisions</h3>`;
-      html += `<table><tr><th>Jour</th><th>Modèle</th><th>Pluie de jour</th><th>Pluie 24 h</th><th>Vent</th><th>Rafales</th><th>Soleil</th><th>T°</th></tr>`;
+      html += `<table><tr><th>Jour</th><th>Pluie de jour</th><th>Pluie 24 h</th><th>Vent</th><th>Rafales</th><th>Soleil</th><th>T°</th></tr>`;
       F.jours.forEach((j, k) => {
-        const jour = pt[2][k];
-        F.modeles.forEach((m, im) => {
-          const v = jour[im];
-          const autre = jour[1 - im];
-          const diff = (i, seuil) => F.modeles.length > 1 && autre && v[i] !== null && autre[i] !== null && Math.abs(v[i] - autre[i]) >= seuil;
-          const td = (i, dec, unite, seuil) => `<td class="${diff(i, seuil) ? 'ecart' : ''}">${fmt(v[i], dec)}${v[i] === null ? '' : unite}</td>`;
-          html += `<tr${dIso(j).getDay() === 6 ? ' style="background:#eef3f8"' : ''}><td>${im === 0 ? fmtJour(dIso(j)) : ''}</td><td class="petit" style="text-align:left">${m}</td>` +
-            td(0, 1, '', 2) + td(1, 1, '', 3) + td(2, 0, '', 10) + td(3, 0, '', 15) + td(4, 1, ' h', 2) + td(5, 0, '°', 3) + `</tr>`;
-        });
+        const m = modeleDuJour(k), v = serieJour(pt, k, m) || [null, null, null, null, null, null];
+        const td = (i, dec, unite) => `<td>${fmt(v[i], dec)}${v[i] === null || v[i] === undefined ? '' : unite}</td>`;
+        const tag = m !== iMF && iMF >= 0 ? ' <span class="petit">ECMWF</span>' : '';
+        html += `<tr${dIso(j).getDay() === 6 ? ' style="background:#eef3f8"' : ''}${k === etat.jour ? ' style="font-weight:600"' : ''}><td>${fmtJour(dIso(j))}${tag}</td>` +
+          td(0, 1, '') + td(1, 1, '') + td(2, 0, '') + td(3, 0, '') + td(4, 1, ' h') + td(5, 0, '°') + `</tr>`;
       });
       html += `</table>`;
-      html += `<div class="petit">Pluie de jour : de ${F.heures_velo[0]} h à ${F.heures_velo[1]} h. Pluie 24 h : de minuit à minuit. Vent, rafales, soleil et T° : entre ${F.heures_velo[0]} h et ${F.heures_velo[1]} h. Pluie en mm, vent en km/h. <span class="ecart">En orange</span> : les deux modèles divergent nettement. Point de grille à ${Math.round(d)} km.</div>`;
+      html += `<div class="petit">Prévisions Météo-France${iMF >= 0 ? ' (ECMWF pour les jours que Météo-France ne couvre pas)' : ''}${pt.fin ? ', grille fine' : ''}. Pluie de jour : de ${F.heures_velo[0]} h à ${F.heures_velo[1]} h ; pluie 24 h : de minuit à minuit ; vent, rafales, soleil et T° : entre ${F.heures_velo[0]} h et ${F.heures_velo[1]} h. Pluie en mm, vent en km/h. Point de grille à ${Math.round(d)} km.</div>`;
       const heures = Array.from({ length: 16 }, (_, k) => k + 6);
       const ligne = (titre, serie, pal, dec, dirs) => `<tr><td class="petit" style="text-align:left !important;white-space:nowrap">${titre}</td>` + heures.map(h => {
         const v = serie ? serie[etat.jour * 24 + h] : null;
@@ -826,12 +906,11 @@ carte.on('click', e => {
         return `<td style="${fond}">${v === null || v === undefined ? '—' : (pal === PAL.pluie && v === 0) ? '·' : fmt(v, dec)}${fl}</td>`;
       }).join('') + `</tr>`;
       if (pt[3]) {
-        html += `<h3 style="margin-top:8px">Heure par heure, ${fmtJour(dIso(F.jours[etat.jour]), true)}</h3><table class="horaire"><tr><th></th>${heures.map(h => `<th>${h}h</th>`).join('')}</tr>`;
-        F.modeles.forEach((m, im) => { html += ligne('Pluie ' + m, pt[3][im], PAL.pluie, 1); });
-        if (pt[4]) F.modeles.forEach((m, im) => {
-          html += ligne('Vent ' + m, pt[4][im], PAL.vent, 0, pt[6] && pt[6][im]);
-          html += ligne('Rafales ' + m, pt[5][im], PAL.vent, 0);
-        });
+        html += `<h3 style="margin-top:8px">Heure par heure, ${fmtJour(dIso(F.jours[etat.jour]), true)} <span class="petit">(${nomModele().split(' (')[0]})</span></h3><table class="horaire"><tr><th></th>${heures.map(h => `<th>${h}h</th>`).join('')}</tr>`;
+        const mj = modeleDuJour(etat.jour);
+        html += ligne('Pluie', serieHoraire(pt, 3, mj), PAL.pluie, 1);
+        html += ligne('Vent', serieHoraire(pt, 4, mj), PAL.vent, 0, serieHoraire(pt, 6, mj));
+        html += ligne('Rafales', serieHoraire(pt, 5, mj), PAL.vent, 0);
         html += `</table><div class="petit">Pluie en mm tombés dans l'heure qui précède (13h = de 12 h à 13 h). Vent et rafales en km/h, la petite flèche montre où va le vent. Jour choisi dans la barre du bas.</div>`;
       }
     }
@@ -934,11 +1013,8 @@ function majPanneau() {
     });
     boutons('choixVar', VARS.map(v => ({ label: v.nom, val: v.id })), etat.variable,
       v => { etat.variable = v; if (!varCourante().horaire && window.arreterLecture) arreterLecture(); sauver(); maj(); });
-    const spe = varCourante().special;
-    const mods = [{ label: 'Auto', val: AUTO }].concat(F.modeles.map((m, i) => ({ label: m, val: i, disabled: spe })));
-    if (F.modeles.length > 1) mods.push({ label: 'Écart entre modèles', val: F.modeles.length, disabled: spe });
-    mods.push({ label: 'Masquer', val: -1 });
-    boutons('choixModele', mods, spe && etat.modele >= 0 ? AUTO : etat.modele, v => { etat.modele = v; sauver(); maj(); });
+    boutons('choixModele', [{ label: 'Afficher le fond', val: AUTO }, { label: 'Masquer', val: -1 }], etat.modele < 0 ? -1 : AUTO,
+      v => { etat.modele = v; sauver(); maj(); });
     const v = varCourante();
     const dj = dIso(F.jours[etat.jour]);
     const lv = document.getElementById('legVert');

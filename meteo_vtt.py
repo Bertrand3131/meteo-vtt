@@ -421,6 +421,61 @@ def resumer_jour(heures, series, jour):
     return [p_velo, p_24, vent, raf, soleil, tmax, direction]
 
 
+def prevoir_points(pts, codes, codes_tous, jours, jours_passes, avec_direction=True):
+    """Prévisions pour une liste de points avec les modèles « codes ».
+    Les résultats sont rangés dans l'ordre de « codes_tous » (None pour un modèle non demandé)."""
+    resultat = []
+    for debut in range(0, len(pts), LOTS_OPENMETEO):
+        lot = pts[debut:debut + LOTS_OPENMETEO]
+        if debut:
+            time.sleep(PAUSE_OPENMETEO)
+        reps = requete_openmeteo([p[0] for p in lot], [p[1] for p in lot], codes)
+        for (lat, lon), rep in zip(lot, reps):
+            h = rep.get("hourly") or {}
+            heures = h.get("time") or []
+            index_h = {t: k for k, t in enumerate(heures)}
+
+            def serie_de(nom, code):
+                v = h.get(nom + "_" + code)
+                if v is None and len(codes) == 1:
+                    v = h.get(nom)
+                return v
+
+            def horaire(nom, dec):
+                res = []
+                for code in codes_tous:
+                    if code not in codes:
+                        res.append(None)
+                        continue
+                    serie = serie_de(nom, code) or []
+                    vals = []
+                    for jour in jours:
+                        for hh in range(24):
+                            k = index_h.get("%sT%02d:00" % (jour, hh))
+                            v = serie[k] if k is not None and k < len(serie) else None
+                            vals.append(None if v is None else (round(v, dec) if dec else int(round(v))))
+                    res.append(vals)
+                return res
+
+            par_jour = []
+            for jour in jours:
+                ligne = []
+                for code in codes_tous:
+                    if code not in codes:
+                        ligne.append(None)
+                        continue
+                    series = {v: serie_de(v, code) for v in VARIABLES_HORAIRES}
+                    ligne.append(resumer_jour(heures, series, jour))
+                par_jour.append(ligne)
+            passes = [[resumer_jour(heures, {"precipitation": serie_de("precipitation", c)}, j)[1] for j in jours_passes]
+                      if c in codes else None for c in codes_tous]
+            resultat.append([lat, lon, par_jour, horaire("precipitation", 1),
+                             horaire("wind_speed_10m", 0), horaire("wind_gusts_10m", 0),
+                             horaire("wind_direction_10m", 0) if avec_direction else None, passes])
+        info("     … %d/%d points" % (min(debut + LOTS_OPENMETEO, len(pts)), len(pts)))
+    return resultat
+
+
 def previsions(stations):
     info("2/3  Prévisions Open-Meteo…")
     modeles = choisir_modeles()
@@ -432,56 +487,26 @@ def previsions(stations):
     jours = [(aujourd_hui + dt.timedelta(days=k)).isoformat() for k in range(JOURS_PREVISION)]
     jours_passes = [(aujourd_hui - dt.timedelta(days=JOURS_PASSES_MODELE - k)).isoformat() for k in range(JOURS_PASSES_MODELE)]
     codes = [m[1] for m in modeles]
-    resultat = []          # [lat, lon, [ [jour0 m0], [jour0 m1] ], ...]
-    for debut in range(0, len(pts), LOTS_OPENMETEO):
-        lot = pts[debut:debut + LOTS_OPENMETEO]
-        if debut:
-            time.sleep(PAUSE_OPENMETEO)
-        reps = requete_openmeteo([p[0] for p in lot], [p[1] for p in lot], codes)
-        for (lat, lon), rep in zip(lot, reps):
-            h = rep.get("hourly") or {}
-            heures = h.get("time") or []
-            par_jour = []
-            for jour in jours:
-                ligne = []
-                for code in codes:
-                    series = {}
-                    for v in VARIABLES_HORAIRES:
-                        series[v] = h.get(v + "_" + code)
-                        if series[v] is None and len(codes) == 1:
-                            series[v] = h.get(v)
-                    ligne.append(resumer_jour(heures, series, jour))
-                par_jour.append(ligne)
-            # séries heure par heure (24 valeurs par jour, pour chaque modèle) :
-            # pluie (mm tombés dans l'heure qui précède), vent moyen, rafales, direction du vent
-            index_h = {t: k for k, t in enumerate(heures)}
+    resultat = prevoir_points(pts, codes, codes, jours, jours_passes)
+    sortie = {"jours": jours, "jours_passes": jours_passes, "modeles": [m[0] for m in modeles], "codes": codes,
+              "dlat": GRILLE_DLAT, "dlon": GRILLE_DLON, "lat0": 41.30, "lon0": -5.20, "points": resultat,
+              "heures_velo": [HEURE_DEBUT, HEURE_FIN]}
 
-            def horaire(nom, dec):
-                res = []
-                for code in codes:
-                    serie = h.get(nom + "_" + code)
-                    if serie is None and len(codes) == 1:
-                        serie = h.get(nom)
-                    serie = serie or []
-                    vals = []
-                    for jour in jours:
-                        for hh in range(24):
-                            k = index_h.get("%sT%02d:00" % (jour, hh))
-                            v = serie[k] if k is not None and k < len(serie) else None
-                            vals.append(None if v is None else (round(v, dec) if dec else int(round(v))))
-                    res.append(vals)
-                return res
-            resultat.append([lat, lon, par_jour, horaire("precipitation", 1),
-                             horaire("wind_speed_10m", 0), horaire("wind_gusts_10m", 0),
-                             horaire("wind_direction_10m", 0),
-                             # pluie des derniers jours estimée par chaque modèle (24 h, minuit à minuit)
-                             [[resumer_jour(heures, {"precipitation": h.get("precipitation_" + c) or
-                                                     (h.get("precipitation") if len(codes) == 1 else None)}, j)[1]
-                               for j in jours_passes] for c in codes]])
-        info("     … %d/%d points" % (min(debut + LOTS_OPENMETEO, len(pts)), len(pts)))
-    return {"jours": jours, "jours_passes": jours_passes, "modeles": [m[0] for m in modeles], "codes": codes,
-            "dlat": GRILLE_DLAT, "dlon": GRILLE_DLON, "lat0": 41.30, "lon0": -5.20, "points": resultat,
-            "heures_velo": [HEURE_DEBUT, HEURE_FIN]}
+    # grille fine (environ 9 km) sur la zone de « grille_fine.json », modèle Météo-France seulement
+    fichier = os.path.join(DOSSIER, "grille_fine.json")
+    code_mf = next((c for n, c in modeles if n == "Météo-France"), None)
+    if os.path.exists(fichier) and code_mf:
+        try:
+            with open(fichier, encoding="utf-8") as f:
+                gf = json.load(f)
+            pf = [tuple(p) for p in gf["points"]]
+            info("     Grille fine (%s) : %d points, modèle Météo-France…" % (gf.get("zone", ""), len(pf)))
+            sortie["fin"] = {"zone": gf.get("zone", ""), "lat0": gf["lat0"], "lon0": gf["lon0"],
+                             "dlat": gf["dlat"], "dlon": gf["dlon"],
+                             "points": prevoir_points(pf, [code_mf], codes, jours, jours_passes, avec_direction=False)}
+        except Exception as e:
+            info("     Grille fine indisponible : %s (la carte garde la grille normale)" % e)
+    return sortie
 
 
 # ---------------------------------------------------------------- 3. carte

@@ -15,6 +15,7 @@ on:
       - 'modele_carte.html'
       - 'web/**'
       - 'grille.json'
+      - 'grille_fine.json'
       - '.github/workflows/**'
 
 permissions:
