@@ -70,7 +70,7 @@
   #barreJours button.samedi:not(.actif) { color: #ffd54a; }
   #barreJours button .sous { display: block; font-weight: 400; font-size: 11px; opacity: .8; }
   /* légende verticale à gauche */
-  #legVert { position: absolute; left: 10px; top: 90px; z-index: 1000; background: rgba(255,255,255,.9); border-radius: 6px; padding: 6px 6px 6px 4px;
+  #legVert { position: absolute; left: 10px; top: 130px; z-index: 900; background: rgba(255,255,255,.9); border-radius: 6px; padding: 6px 6px 6px 4px;
     box-shadow: 0 1px 5px rgba(0,0,0,.2); font: 11px "Segoe UI", sans-serif; color: #2b333b; display: flex; gap: 4px; }
   #legVert .degrade { width: 14px; border-radius: 3px; border: 1px solid #c9ccc8; }
   #legVert .graduations { position: relative; width: 30px; }
@@ -91,6 +91,12 @@
   .fleche { pointer-events: none; }
   .fleche svg { display: block; }
   #boutonPanneau { display: none; }
+  .recherche { background: #fff; border-radius: 8px; box-shadow: 0 1px 5px rgba(0,0,0,.3); width: 230px; overflow: hidden; }
+  .recherche input { width: 100%; box-sizing: border-box; border: none; padding: 8px 10px; font: 14px "Segoe UI", sans-serif; outline: none; }
+  .recherche-item { padding: 6px 10px; border-top: 1px solid #eee; cursor: pointer; font-size: 13px; }
+  .recherche-item:hover { background: #eef3f8; }
+  .recherche-item span { color: #6b757e; font-size: 11.5px; }
+  .recherche-vide { padding: 6px 10px; font-size: 12.5px; color: #6b757e; border-top: 1px solid #eee; }
   /* date de mise à jour, toujours visible sur la carte */
   #badgeMaj { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000; background: rgba(30,38,46,.88); color: #fff;
     font: 600 13px "Segoe UI", sans-serif; padding: 6px 12px; border-radius: 16px; box-shadow: 0 2px 8px rgba(0,0,0,.25); white-space: nowrap; pointer-events: none; }
@@ -106,7 +112,7 @@
     #panneau.ouvert { transform: none; }
     #panneau .groupe button { padding: 8px 11px; font-size: 14.5px; }
     #panneau .pied { display: none; }
-    #badgeMaj { top: 64px; font-size: 12px; padding: 5px 10px; }
+    #badgeMaj { top: auto; bottom: 108px; font-size: 12px; padding: 5px 10px; }
     #boutonPanneau { display: block; position: absolute; top: 10px; left: 56px; z-index: 1000; background: #1e262e; color: #fff; border: none;
       border-radius: 8px; padding: 9px 13px; font: 600 14px "Segoe UI", sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
     #barreJours { bottom: 8px; max-width: 96vw; overflow-x: auto; }
@@ -115,7 +121,9 @@
     #barreHeures input { width: 38vw; }
     #barreHeures .detail { display: none; }
     #barreHeures button { width: 34px; height: 32px; }
-    #legVert { top: 92px; transform: scale(.72); transform-origin: top left; }
+    #legVert { top: 140px; transform: scale(.72); transform-origin: top left; }
+    .recherche { width: 180px; }
+    .recherche input { font-size: 15px; padding: 9px 10px; }
     .popup-ouverte #legVert { display: none !important; }
     .leaflet-popup-content { max-width: 84vw; overflow-x: auto; font-size: 12px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
     .leaflet-popup-scrolled { border: none; }
@@ -158,7 +166,7 @@
 
     <div class="pied">
       Le jour se choisit dans la barre en bas de la carte. Passe la souris sur la carte pour lire la valeur ; clique n'importe où pour voir les prévisions jour par jour des deux modèles et la pluie de la station la plus proche.<br><br>
-      Pluie mesurée : stations Météo-France, données quotidiennes publiques (data.gouv.fr). Prévisions : <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (modèles Météo-France et ECMWF). Fond : Esri, OpenTopoMap, CyclOSM, IGN (données © OpenStreetMap).<br>
+      Pluie mesurée : stations Météo-France, données quotidiennes publiques (data.gouv.fr). Prévisions : <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (modèles Météo-France et ECMWF). Fond et noms : Esri, OpenTopoMap, CyclOSM, IGN (données © OpenStreetMap). Recherche : IGN / Base adresse nationale.<br>
       Pour comparer : <a href="https://www.meteociel.fr/climatologie/climato.php" target="_blank">Meteociel climato</a>
     </div>
   </div>
@@ -295,15 +303,16 @@ const fonds = {
 let nomFond = 'Gris clair (Esri)';
 try { if (fonds[localStorage.getItem('meteoVTTfond')]) nomFond = localStorage.getItem('meteoVTTfond'); } catch (e) {}
 fonds[nomFond].addTo(carte);
-L.control.layers(fonds, null, { position: 'topright', collapsed: window.innerWidth <= 820 }).addTo(carte);
 carte.on('baselayerchange', e => { try { localStorage.setItem('meteoVTTfond', e.name); } catch (x) {} });
-// noms des villes par-dessus les couleurs (avec le fond gris clair)
+// noms des villes PAR-DESSUS les couleurs : texte blanc cerné de sombre, lisible sur n'importe quelle couleur
 carte.createPane('nomsVilles'); carte.getPane('nomsVilles').style.zIndex = 450; carte.getPane('nomsVilles').style.pointerEvents = 'none';
-const nomsVilles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
-  pane: 'nomsVilles', maxZoom: 16, attribution: '' });
-function majNomsVilles(nom) { if (nom === 'Gris clair (Esri)') nomsVilles.addTo(carte); else carte.removeLayer(nomsVilles); }
-majNomsVilles(nomFond);
-carte.on('baselayerchange', e => majNomsVilles(e.name));
+const nomsVilles = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  pane: 'nomsVilles', maxZoom: 16, attribution: 'Noms © Esri' });
+let nomsActifs = true;
+try { if (localStorage.getItem('meteoVTTnoms') === '0') nomsActifs = false; } catch (e) {}
+if (nomsActifs) nomsVilles.addTo(carte);
+L.control.layers(fonds, { 'Noms des villes au-dessus': nomsVilles }, { position: 'topright', collapsed: window.innerWidth <= 820 }).addTo(carte);
+carte.on('overlayadd overlayremove', e => { if (e.layer === nomsVilles) try { localStorage.setItem('meteoVTTnoms', e.type === 'overlayadd' ? '1' : '0'); } catch (x) {} });
 ['barreJours', 'barreHeures', 'legVert', 'survol', 'boutonPanneau', 'badgeMaj'].forEach(id => {
   const d = document.createElement('div'); d.id = id; carte.getContainer().appendChild(d);
   L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d);
@@ -463,25 +472,68 @@ function sauverZone() { try { localStorage.setItem('meteoVTTzone', JSON.stringif
 const RAYON_MAX_KM = 420;   // on calcule une fois les trajets jusqu'à ~4 h, le temps choisi filtre ensuite
 function distKm(a, b, c, d) { const cl = Math.cos((a + c) / 2 * Math.PI / 180); return Math.hypot((a - c) * 111, (b - d) * 111 * cl); }
 function zoneEtat(t) { const el = document.getElementById('zoneEtat'); if (el) el.innerHTML = t; }
-async function chercherVille(nom) {
+// recherche de communes (IGN, puis Base adresse nationale, puis OpenStreetMap en secours)
+async function chercherVilles(nom, n = 5) {
+  const q = encodeURIComponent(nom);
   const urls = [
-    `https://data.geopf.fr/geocodage/search?q=${encodeURIComponent(nom)}&index=address&type=municipality&limit=1`,
-    `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(nom)}&type=municipality&limit=1`,
+    `https://data.geopf.fr/geocodage/search?q=${q}&index=address&type=municipality&limit=${n}`,
+    `https://api-adresse.data.gouv.fr/search/?q=${q}&type=municipality&limit=${n}`,
   ];
   for (const u of urls) {
     try {
       const r = await fetch(u); if (!r.ok) continue;
-      const j = await r.json(); const f = j.features && j.features[0];
-      if (f) return { nom: f.properties.label || f.properties.city || nom, lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] };
+      const j = await r.json();
+      const res = (j.features || []).map(f => ({ nom: f.properties.city || f.properties.name || f.properties.label,
+        detail: [f.properties.postcode, f.properties.context].filter(Boolean).join(' · '),
+        lat: f.geometry.coordinates[1], lon: f.geometry.coordinates[0] }));
+      if (res.length) return res;
     } catch (e) {}
   }
   try {
-    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=fr&q=${encodeURIComponent(nom)}`);
+    const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=${n}&countrycodes=fr&q=${q}`);
     const j = await r.json();
-    if (j[0]) return { nom: j[0].display_name.split(',')[0], lat: +j[0].lat, lon: +j[0].lon };
+    return j.map(x => ({ nom: x.display_name.split(',')[0], detail: x.display_name.split(',').slice(1, 3).join(','), lat: +x.lat, lon: +x.lon }));
   } catch (e) {}
-  return null;
+  return [];
 }
+async function chercherVille(nom) { const r = await chercherVilles(nom, 1); return r[0] || null; }
+
+// barre de recherche sur la carte
+(function () {
+  const Ctrl = L.Control.extend({ options: { position: 'topleft' }, onAdd() {
+    const d = L.DomUtil.create('div', 'recherche');
+    d.innerHTML = `<div class="recherche-ligne"><input id="rechercheVille" type="search" placeholder="🔍 Chercher une ville" autocomplete="off"></div><div id="rechercheResultats"></div>`;
+    L.DomEvent.disableClickPropagation(d); L.DomEvent.disableScrollPropagation(d);
+    L.DomEvent.on(d, 'click', L.DomEvent.stopPropagation);
+    return d;
+  } });
+  carte.addControl(new Ctrl());
+  const champ = document.getElementById('rechercheVille'), liste = document.getElementById('rechercheResultats');
+  const repere = L.layerGroup().addTo(carte);
+  let minuterie = null, derniere = '';
+  const aller = v => {
+    liste.innerHTML = ''; champ.value = v.nom; champ.blur();
+    carte.flyTo([v.lat, v.lon], Math.max(carte.getZoom(), 10), { duration: 0.8 });
+    repere.clearLayers();
+    repere.addLayer(L.circleMarker([v.lat, v.lon], { radius: 8, color: '#fff', weight: 3, fillColor: '#2f7fd0', fillOpacity: 1 })
+      .bindTooltip(v.nom, { permanent: true, direction: 'top', offset: [0, -8] }));
+  };
+  const lancer = async (immediat) => {
+    const t = champ.value.trim();
+    if (t.length < 2) { liste.innerHTML = ''; return; }
+    if (t === derniere && !immediat) return;
+    derniere = t;
+    const res = await chercherVilles(t, 5);
+    if (champ.value.trim() !== t) return;   // l'utilisateur a continué de taper
+    if (!res.length) { liste.innerHTML = '<div class="recherche-vide">Aucune commune trouvée</div>'; return; }
+    if (immediat && res.length) { aller(res[0]); return; }
+    liste.innerHTML = res.map((v, i) => `<div class="recherche-item" data-i="${i}"><b>${v.nom}</b> <span>${v.detail || ''}</span></div>`).join('');
+    liste.querySelectorAll('.recherche-item').forEach(el => el.onclick = ev => { L.DomEvent.stop(ev); aller(res[+el.dataset.i]); });
+  };
+  champ.addEventListener('input', () => { clearTimeout(minuterie); minuterie = setTimeout(() => lancer(false), 350); });
+  champ.addEventListener('keydown', ev => { if (ev.key === 'Enter') { clearTimeout(minuterie); lancer(true); } if (ev.key === 'Escape') { liste.innerHTML = ''; } });
+  carte.on('click', () => { liste.innerHTML = ''; });
+})();
 // temps de trajet réels (OSRM, routes OpenStreetMap), par lots de 90 points
 async function calculerDurees() {
   const durees = new Array(F.points.length).fill(null);
@@ -594,7 +646,7 @@ function dessinerGrille() {
     }
   }
   ctx.putImageData(img, 0, 0);
-  coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: 0.72, interactive: false }));
+  coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: 0.66, interactive: false }));
 }
 
 // flèches de vent (direction d'où vient le vent -> la flèche montre où il va)

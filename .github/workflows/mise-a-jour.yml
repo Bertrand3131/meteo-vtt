@@ -32,7 +32,7 @@ jobs:
     timeout-minutes: 45
     environment:
       name: github-pages
-      url: ${{ steps.deploiement.outputs.page_url }}
+      url: ${{ steps.essai1.outputs.page_url || steps.essai2.outputs.page_url || steps.deploiement.outputs.page_url }}
     steps:
       - uses: actions/checkout@v6
 
@@ -57,7 +57,22 @@ jobs:
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site
+      # GitHub a parfois des pannes passagères au moment de publier : on réessaie deux fois
+      - id: essai1
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Pause avant nouvel essai
+        if: steps.essai1.outcome == 'failure'
+        run: sleep 90
+      - id: essai2
+        if: steps.essai1.outcome == 'failure'
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+      - name: Pause avant dernier essai
+        if: steps.essai1.outcome == 'failure' && steps.essai2.outcome == 'failure'
+        run: sleep 180
       - id: deploiement
+        if: steps.essai1.outcome == 'failure' && steps.essai2.outcome == 'failure'
         uses: actions/deploy-pages@v5
 
       # Une petite trace par semaine dans le dépôt : sans activité pendant 60 jours,
