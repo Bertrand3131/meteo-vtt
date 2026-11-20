@@ -48,7 +48,7 @@ JOURS_PREVISION = 7
 JOURS_PASSES_MODELE = 4   # pluie estimée par les modèles sur les derniers jours (comble le retard des stations)
 HEURE_DEBUT, HEURE_FIN = 8, 18   # « journée de vélo » : de 8 h à 18 h
 LOTS_OPENMETEO = 50              # points par requête
-PAUSE_OPENMETEO = 4.0            # secondes entre requêtes (limite gratuite : ~600 appels/min)
+PAUSE_OPENMETEO = 6.5            # secondes entre requêtes (limite gratuite : 600 appels/min, 5 000/h, 10 000/jour)
 
 # Modèles essayés dans l'ordre (le premier accepté par Open-Meteo est gardé)
 MODELES = [
@@ -322,7 +322,10 @@ def requete_openmeteo(lats, lons, modeles):
             d = json.loads(corps.decode("utf-8"))
             return d if isinstance(d, list) else [d]
         if code == 429:
-            info("     Limite d'Open-Meteo atteinte, pause d'une minute…")
+            raison = corps[:200].decode("utf-8", "replace")
+            info("     Limite d'Open-Meteo atteinte (%s), pause d'une minute…" % raison)
+            if "aily" in raison or "ourly" in raison:     # limite horaire ou journalière : inutile d'insister
+                raise RuntimeError("limite horaire ou journalière d'Open-Meteo atteinte : %s" % raison)
             time.sleep(65)
             continue
         raise RuntimeError("Open-Meteo a répondu %s : %s" % (code, corps[:300].decode("utf-8", "replace")))
