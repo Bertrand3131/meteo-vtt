@@ -241,7 +241,7 @@ const VARS = [
   { id: 3, nom: 'Rafales', aide: 'rafales heure par heure', horaire: 5, pal: 'vent', dec: 0, ecart: 15 },
   { id: 4, nom: 'Soleil', aide: 'heures de soleil entre 8 h et 18 h', pal: 'soleil', dec: 1, ecart: 2 },
   { id: 9, nom: 'Où rouler ?', aide: 'classement relatif', pal: 'ou', dec: 0, special: true },
-  { id: 5, nom: 'T° max', aide: 'température la plus haute entre 8 h et 18 h', pal: 'temp', dec: 0, ecart: 3 },
+  { id: 5, nom: 'Température', aide: 'température à 2 m, heure par heure', pal: 'temp', dec: 0, ecart: 3, horaire: 8 },
 ];
 const etat = { nPluie: 10, jour: 0, variable: 0, modele: 0, heure: 13 };
 try { Object.assign(etat, JSON.parse(localStorage.getItem('meteoVTT') || '{}')); } catch (e) {}
@@ -913,7 +913,8 @@ carte.on('click', e => {
         html += ligne('Pluie', serieHoraire(pt, 3, mj), PAL.pluie, 1);
         html += ligne('Vent', serieHoraire(pt, 4, mj), PAL.vent, 0, serieHoraire(pt, 6, mj));
         html += ligne('Rafales', serieHoraire(pt, 5, mj), PAL.vent, 0);
-        html += `</table><div class="petit">Pluie en mm tombés dans l'heure qui précède (13h = de 12 h à 13 h). Vent et rafales en km/h, la petite flèche montre où va le vent. Jour choisi dans la barre du bas.</div>`;
+        if (pt[8] || (pt.fin && pt.__c >= 0 && F.points[pt.__c][8])) html += ligne('Temp. °C', serieHoraire(pt, 8, mj), PAL.temp, 0);
+        html += `</table><div class="petit">Pluie en mm tombés dans l'heure qui précède (13h = de 12 h à 13 h). Vent et rafales en km/h, la petite flèche montre où va le vent. Température en °C. Jour choisi dans la barre du bas.</div>`;
       }
     }
   }
@@ -1028,6 +1029,7 @@ function majPanneau() {
     const hTxt = String(etat.heure).padStart(2, '0') + ':00';
     if (v.id === 0) note = `<b>Pluie</b> : mm tombés en 1 h, de ${(etat.heure + 23) % 24} h à ${etat.heure} h, ${fmtJour(dj, true)}` +
       (mSel() < F.modeles.length ? `, modèle ${nomModele()}. Pas de couleur = sec.` : ` : différence entre les deux modèles.`);
+    if (v.id === 5) note = `<b>Température</b> prévue à ${hTxt}, ${fmtJour(dj, true)}, modèle ${nomModele()}.`;
     if (v.id === 2 || v.id === 3) note = `<b>${v.nom}</b> à ${hTxt}, ${fmtJour(dj, true)}` +
       (mSel() < F.modeles.length ? `, modèle ${nomModele()}. Les flèches montrent où va le vent.` : ` : différence entre les deux modèles.`);
     if (v.special) note = `<b>Où rouler ?</b> ${fmtJour(dj, true)} : classement <b>relatif</b> ${ZONE.actif && ZONE.durees ? 'des endroits à moins de ' + Math.floor(ZONE.minutes / 60) + ' h ' + String(ZONE.minutes % 60).padStart(2, '0') + ' de ' + ZONE.nom : 'de toute la France'} pour ce jour, modèle ${nomModele()}. ` +

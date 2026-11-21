@@ -481,7 +481,8 @@ def prevoir_points(pts, codes, codes_tous, jours, jours_passes, avec_direction=T
                       if c in codes else None for c in codes_tous]
             resultat.append([lat, lon, par_jour, horaire("precipitation", 1),
                              horaire("wind_speed_10m", 0), horaire("wind_gusts_10m", 0),
-                             horaire("wind_direction_10m", 0) if avec_direction else None, passes])
+                             horaire("wind_direction_10m", 0) if avec_direction else None, passes,
+                             horaire("temperature_2m", 0)])
         info("     … %d/%d points" % (min(debut + LOTS_OPENMETEO, len(pts)), len(pts)))
     return resultat
 
