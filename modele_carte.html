@@ -365,8 +365,10 @@ const coucheStations = L.layerGroup().addTo(carte);
 const coucheEtiquettes = L.layerGroup().addTo(carte);
 
 // cumuls des stations
+// les cumuls des stations s'arrêtent au dernier jour publié par la plupart des stations
+const iFinComplet = (P && P.dernier_complet && P.jours.indexOf(P.dernier_complet) >= 0) ? P.jours.indexOf(P.dernier_complet) : (P ? P.jours.length - 1 : 0);
 function cumul(valeurs, n) {
-  const v = valeurs.slice(-n);
+  const v = valeurs.slice(Math.max(0, iFinComplet - n + 1), iFinComplet + 1);
   const ok = v.filter(x => x !== null);
   return { somme: ok.length ? ok.reduce((a, b) => a + b, 0) : null, manque: v.length - ok.length };
 }
@@ -820,9 +822,9 @@ carte.on('zoomend moveend', () => { dessinerEtiquettes(); dessinerFleches(); });
 
 // ------------------------------------------------------------------ popups
 function tableauPluie(s) {
-  const lignes = P.jours.map((j, k) => [j, s[6][k]]).slice(-10).reverse();
+  const lignes = P.jours.map((j, k) => [j, s[6][k], k > iFinComplet]).filter(l => !l[2] || l[1] !== null).slice(-11).reverse();
   return `<table><tr><th>Jour</th><th>Pluie</th></tr>` +
-    lignes.map(([j, v]) => `<tr><td>${fmtJour(dCompact(j), true)}</td><td>${v === null ? '<span class="petit">manquant</span>' : fmt(v, 1) + ' mm'}</td></tr>`).join('') + `</table>`;
+    lignes.map(([j, v, avance]) => `<tr><td>${fmtJour(dCompact(j), true)}${avance ? ' <span class="petit">(déjà publié)</span>' : ''}</td><td>${v === null ? '<span class="petit">manquant</span>' : fmt(v, 1) + ' mm'}</td></tr>`).join('') + `</table>`;
 }
 function blocCumuls(s) {
   return `<div class="cumuls">` + [3, 5, 10].map(n => {
@@ -852,7 +854,7 @@ function histoBoue(c, jourSortie) {
       Plus le bâton est pâle, moins le jour compte dans le classement (le poids est divisé par 2 tous les 3 jours).</div>`;
 }
 function ouvrirStation(s, ll) {
-  const fin = dCompact(P.jours[P.jours.length - 1]);
+  const fin = dCompact(P.jours[iFinComplet]);
   const html = `<h3>${s[1]}</h3><div class="petit">Station Météo-France ${s[0]} · ${s[4] ?? '?'} m · dép. ${s[5]}</div>` +
     blocCumuls(s) + `<div class="petit">Jusqu'au ${fmtJour(fin, true)} inclus (journée climatologique Météo-France).</div>` +
     tableauPluie(s);
@@ -991,10 +993,11 @@ function majPanneau() {
   if (P) {
     boutons('choixPluie', [3, 5, 10].map(n => ({ label: n + ' derniers jours', val: n })).concat([{ label: 'Masquer', val: 0 }]), etat.nPluie,
       v => { etat.nPluie = v; sauver(); dessinerStations(); dessinerEtiquettes(); majPanneau(); });
-    const fin = dCompact(P.jours[P.jours.length - 1]);
-    const deb = dCompact(P.jours[P.jours.length - (etat.nPluie || 10)]);
+    const fin = dCompact(P.jours[iFinComplet]);
+    const deb = dCompact(P.jours[Math.max(0, iFinComplet - (etat.nPluie || 10) + 1)]);
     document.getElementById('notePluie').innerHTML = `Cumul du ${fmtJour(deb, true)} au ${fmtJour(fin, true)} inclus, ${P.stations.length} stations. ` +
-      `Contour pointillé gris = jour(s) manquant(s), cumul incomplet. Chiffres visibles en zoomant.`;
+      `Contour pointillé gris = jour(s) manquant(s), cumul incomplet. Chiffres visibles en zoomant.` +
+      (iFinComplet < P.jours.length - 1 ? ` Les jours suivants ne sont encore publiés que par une partie des stations (visibles en cliquant sur une station, et utilisés par « Où rouler ? »).` : '');
     if (etat.nPluie) legende(document.getElementById('legPluie'), PAL.passee, `Pluie tombée sur ${etat.nPluie} jours (mm)`);
     else { document.getElementById('legPluie').innerHTML = ''; document.getElementById('notePluie').textContent = 'Points masqués.'; }
   } else {

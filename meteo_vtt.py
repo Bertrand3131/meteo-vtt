@@ -277,7 +277,13 @@ def pluie_mesuree():
         raise RuntimeError("aucune valeur de pluie récente dans les fichiers")
     maxi = max(compte.values())
     dernier = max(j for j, n in compte.items() if n >= 0.5 * maxi)
-    d_fin = dt.datetime.strptime(dernier, "%Y%m%d").date()
+    # jours récents où seule une partie des stations a déjà publié : gardés aussi (la carte s'en sert
+    # là où une station proche a une mesure, et prend le modèle ailleurs)
+    partiels = [j for j, n in compte.items() if j > dernier and n >= 0.02 * maxi]
+    dernier_partiel = max(partiels) if partiels else dernier
+    info("     Stations ayant publié, jour par jour : " +
+         ", ".join("%s/%s : %d" % (j[6:], j[4:6], compte.get(j, 0)) for j in sorted(compte)[-6:]))
+    d_fin = dt.datetime.strptime(dernier_partiel, "%Y%m%d").date()
     jours = [(d_fin - dt.timedelta(days=JOURS_PLUIE - 1 - k)).strftime("%Y%m%d") for k in range(JOURS_PLUIE)]
 
     liste = []
@@ -289,9 +295,10 @@ def pluie_mesuree():
             continue        # station sans mesure récente
         liste.append([poste, s["nom"], round(s["lat"], 4), round(s["lon"], 4),
                       None if s["alt"] is None else int(s["alt"]), s["dep"], valeurs])
-    info("     %d stations avec des mesures récentes. Dernier jour disponible : %s." %
-         (len(liste), d_fin.strftime("%d/%m/%Y")))
-    return {"jours": jours, "stations": liste, "erreurs": erreurs}
+    info("     %d stations avec des mesures récentes. Dernier jour complet : %s%s." %
+         (len(liste), dt.datetime.strptime(dernier, "%Y%m%d").strftime("%d/%m/%Y"),
+          "" if dernier_partiel == dernier else ", jours partiels jusqu'au " + d_fin.strftime("%d/%m/%Y")))
+    return {"jours": jours, "dernier_complet": dernier, "stations": liste, "erreurs": erreurs}
 
 
 # ---------------------------------------------------------------- 2. prévisions
