@@ -319,9 +319,9 @@ def requete_openmeteo(lats, lons, modeles):
     url = URL_OM + "?" + urllib.parse.urlencode(params, safe=",")
     for essai in range(5):
         try:
-            code, corps, _ = http_get(url, timeout=60, essais=1)
+            code, corps, _ = http_get(url, timeout=30, essais=1)
         except Exception as e:      # coupure réseau, délai dépassé… : on réessaie
-            attente = 10 * (essai + 1)
+            attente = 5 * (essai + 1)
             info("     Connexion à Open-Meteo interrompue (%s), nouvel essai dans %d s…" % (str(e)[:80], attente))
             time.sleep(attente)
             continue
