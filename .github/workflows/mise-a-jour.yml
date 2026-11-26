@@ -16,6 +16,7 @@ on:
       - 'web/**'
       - 'grille.json'
       - 'grille_fine.json'
+      - 'sol.json'
       - '.github/workflows/**'
 
 permissions:

@@ -305,11 +305,11 @@ def pluie_mesuree():
 URL_OM = "https://api.open-meteo.com/v1/forecast"
 
 
-def requete_openmeteo(lats, lons, modeles):
+def requete_openmeteo(lats, lons, modeles, variables=None):
     params = {
         "latitude": ",".join("%.3f" % x for x in lats),
         "longitude": ",".join("%.3f" % x for x in lons),
-        "hourly": ",".join(VARIABLES_HORAIRES),
+        "hourly": ",".join(variables or VARIABLES_HORAIRES),
         "models": ",".join(modeles),
         "timezone": "Europe/Paris",
         "forecast_days": JOURS_PREVISION,
@@ -431,7 +431,24 @@ def resumer_jour(heures, series, jour):
     return [p_velo, p_24, vent, raf, soleil, tmax, direction]
 
 
-def prevoir_points(pts, codes, codes_tous, jours, jours_passes, avec_direction=True):
+VARIABLES_SOL = ["et0_fao_evapotranspiration", "soil_moisture_0_to_7cm"]
+
+
+def charger_sol():
+    """Nature du sol par point (fichier sol.json fabriqué une fois par preparer_sol.py)."""
+    chemin = os.path.join(DOSSIER, "sol.json")
+    if not os.path.exists(chemin):
+        info("     (sol.json absent : la nature du sol ne sera pas prise en compte. Voir « Preparer le sol.bat ».)")
+        return {}
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            return json.load(f).get("points", {})
+    except Exception as e:
+        info("     sol.json illisible : %s" % e)
+        return {}
+
+
+def prevoir_points(pts, codes, codes_tous, jours, jours_passes, avec_direction=True, sol=None, avec_humidite=True):
     """Prévisions pour une liste de points avec les modèles « codes ».
     Les résultats sont rangés dans l'ordre de « codes_tous » (None pour un modèle non demandé)."""
     resultat = []
@@ -439,7 +456,8 @@ def prevoir_points(pts, codes, codes_tous, jours, jours_passes, avec_direction=T
         lot = pts[debut:debut + LOTS_OPENMETEO]
         if debut:
             time.sleep(PAUSE_OPENMETEO)
-        reps = requete_openmeteo([p[0] for p in lot], [p[1] for p in lot], codes)
+        variables = VARIABLES_HORAIRES + (VARIABLES_SOL if avec_humidite else VARIABLES_SOL[:1])
+        reps = requete_openmeteo([p[0] for p in lot], [p[1] for p in lot], codes, variables)
         for (lat, lon), rep in zip(lot, reps):
             h = rep.get("hourly") or {}
             heures = h.get("time") or []
@@ -482,7 +500,17 @@ def prevoir_points(pts, codes, codes_tous, jours, jours_passes, avec_direction=T
             resultat.append([lat, lon, par_jour, horaire("precipitation", 1),
                              horaire("wind_speed_10m", 0), horaire("wind_gusts_10m", 0),
                              horaire("wind_direction_10m", 0) if avec_direction else None, passes,
-                             horaire("temperature_2m", 0)])
+                             horaire("temperature_2m", 0),
+                             # [9] nature du sol : argile %, sable %, cailloux %, capacité au champ %
+                             (sol or {}).get("%.3f,%.3f" % (lat, lon)),
+                             # [10] humidité du sol 0-7 cm (m³/m³), heure par heure
+                             horaire("soil_moisture_0_to_7cm", 2) if avec_humidite else None,
+                             # [11] évapotranspiration de référence (mm/jour) : jours passés puis jours prévus
+                             [[round(sum(v for v in (serie_de("et0_fao_evapotranspiration", c) or [])[k0:k0 + 24] if v is not None), 2)
+                               if index_h.get(j + "T00:00") is not None and (serie_de("et0_fao_evapotranspiration", c) or []) else None
+                               for j in jours_passes + jours
+                               for k0 in [index_h.get(j + "T00:00", 0)]]
+                              if c in codes else None for c in codes_tous]])
         info("     … %d/%d points" % (min(debut + LOTS_OPENMETEO, len(pts)), len(pts)))
     return resultat
 
@@ -498,7 +526,10 @@ def previsions(stations):
     jours = [(aujourd_hui + dt.timedelta(days=k)).isoformat() for k in range(JOURS_PREVISION)]
     jours_passes = [(aujourd_hui - dt.timedelta(days=JOURS_PASSES_MODELE - k)).isoformat() for k in range(JOURS_PASSES_MODELE)]
     codes = [m[1] for m in modeles]
-    resultat = prevoir_points(pts, codes, codes, jours, jours_passes)
+    sol = charger_sol()
+    if sol:
+        info("     Nature du sol connue pour %d points." % len(sol))
+    resultat = prevoir_points(pts, codes, codes, jours, jours_passes, sol=sol)
     sortie = {"jours": jours, "jours_passes": jours_passes, "modeles": [m[0] for m in modeles], "codes": codes,
               "dlat": GRILLE_DLAT, "dlon": GRILLE_DLON, "lat0": 41.30, "lon0": -5.20, "points": resultat,
               "heures_velo": [HEURE_DEBUT, HEURE_FIN]}
@@ -514,7 +545,8 @@ def previsions(stations):
             info("     Grille fine (%s) : %d points, modèle Météo-France…" % (gf.get("zone", ""), len(pf)))
             sortie["fin"] = {"zone": gf.get("zone", ""), "lat0": gf["lat0"], "lon0": gf["lon0"],
                              "dlat": gf["dlat"], "dlon": gf["dlon"],
-                             "points": prevoir_points(pf, [code_mf], codes, jours, jours_passes, avec_direction=False)}
+                             "points": prevoir_points(pf, [code_mf], codes, jours, jours_passes, avec_direction=False,
+                                                           sol=sol, avec_humidite=False)}
         except Exception as e:
             info("     Grille fine indisponible : %s (la carte garde la grille normale)" % e)
     return sortie

@@ -147,8 +147,11 @@
     <h2>Fond de carte : prévision <span class="ico ico-carre" title="Sur la carte : des carrés de couleur d'environ 28 km"></span></h2>
     <div class="groupe" id="choixVar"></div>
     <div class="groupe" id="choixModele"></div>
+    <div style="font-size:12.5px;margin:2px 0 6px"><label style="display:inline-block;width:142px">Couleurs : transparence</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="85" id="transparence"> <span id="vTransparence"></span></div>
     <div class="note" id="notePrev"></div>
     <div id="reglagesOu" style="display:none;font-size:12.5px;margin:4px 0 6px">
+      <div style="margin-bottom:6px"><label><input type="checkbox" id="ecranActif"> <b>Comparer à ce que je vois</b></label>
+        <div class="note" style="margin:2px 0 0 20px">Le classement se refait sur la partie de la carte affichée : en zoomant sur ton coin, les écarts ressortent du rouge au vert.</div></div>
       <div class="zone">
         <label><input type="checkbox" id="zoneActive"> <b>Limiter à ma zone</b></label>
         <div id="zoneReglages">
@@ -159,14 +162,14 @@
       </div>
       <div style="margin-bottom:6px"><b>Je roule de</b> <select id="sortieDebut"></select> à <select id="sortieFin"></select></div>
       <div style="margin-bottom:3px;color:#4b5560">Importance de chaque critère :</div>
-      <div><label style="display:inline-block;width:142px">Boue (pluie passée)</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsBoue"> <span id="vBoue"></span></div>
+      <div><label style="display:inline-block;width:142px">Boue (sol mouillé)</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsBoue"> <span id="vBoue"></span></div>
       <div><label style="display:inline-block;width:142px">Pluie pendant la sortie</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsPluie"> <span id="vPluie"></span></div>
       <div><label style="display:inline-block;width:142px">Vent et rafales</label><input type="range" style="width:110px;vertical-align:middle" min="0" max="100" id="poidsVent"> <span id="vVent"></span></div>
     </div>
 
     <div class="pied">
       Le jour se choisit dans la barre en bas de la carte. Passe la souris sur la carte pour lire la valeur ; clique n'importe où pour voir les prévisions jour par jour des deux modèles et la pluie de la station la plus proche.<br><br>
-      Pluie mesurée : stations Météo-France, données quotidiennes publiques (data.gouv.fr). Prévisions : <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (modèles Météo-France et ECMWF). Fond et noms : Esri, OpenTopoMap, CyclOSM, IGN (données © OpenStreetMap). Recherche : IGN / Base adresse nationale.<br>
+      Pluie mesurée : stations Météo-France, données quotidiennes publiques (data.gouv.fr). Prévisions : <a href="https://open-meteo.com/" target="_blank">Open-Meteo</a> (modèles Météo-France et ECMWF). Sol : SoilGrids 2.0 (ISRIC, CC BY 4.0). Fond et noms : Esri, OpenTopoMap, CyclOSM, IGN (données © OpenStreetMap). Recherche : IGN / Base adresse nationale.<br>
       Pour comparer : <a href="https://www.meteociel.fr/climatologie/climato.php" target="_blank">Meteociel climato</a>
     </div>
   </div>
@@ -196,6 +199,9 @@ const PAL = {
             couleurs: ['#7d858c', '#9a9e9a', '#b6b49a', '#d0c88f', '#e3d77b', '#efdd5f', '#f5d743', '#f7c92c', '#f5b51c', '#ef9d0e'], unite: 'h' },
   temp:   { seuils: [-10, -5, 0, 5, 10, 15, 20, 25, 30, 35],
             couleurs: ['#7a3fb8', '#4a4fc4', '#3b86d6', '#3dbbd0', '#4fbf7a', '#a9d24a', '#ece23a', '#f5a832', '#e8592e', '#c42828'], unite: '°C' },
+  // sol : sec (sable clair) -> humide (brun) -> gorgé d'eau (bleu)
+  sol:    { seuils: [30, 50, 65, 75, 85, 95, 105, 120, 140],
+            couleurs: ['#f7f0dc', '#ecdcae', '#dcbf7c', '#c89a52', '#a8743a', '#7f5228', '#5b3b2a', '#3b3f6e', '#1f4fa0'], unite: '%' },
   ou:     { seuils: [0, 10, 25, 40, 50, 60, 75, 90, 100],
             couleurs: ['#b2182b', '#d6604d', '#f4a582', '#f7d08a', '#f2ef9a', '#c7e58b', '#7fc97f', '#3a9d4f', '#1b7837'], unite: '%' },
   ecart:  { seuils: [0, 1, 2, 4, 6, 10, 15, 25], couleurs: [null, '#eeeeee', '#d9d9d9', '#bdbdbd', '#999999', '#737373', '#4d4d4d', '#262626'], unite: '' },
@@ -242,6 +248,7 @@ const VARS = [
   { id: 4, nom: 'Soleil', aide: 'heures de soleil entre 8 h et 18 h', pal: 'soleil', dec: 1, ecart: 2 },
   { id: 9, nom: 'Où rouler ?', aide: 'classement relatif', pal: 'ou', dec: 0, special: true },
   { id: 5, nom: 'Température', aide: 'température à 2 m, heure par heure', pal: 'temp', dec: 0, ecart: 3, horaire: 8 },
+  ...((D && D.prevision && D.prevision.points.some(p => p[10])) ? [{ id: 6, nom: 'Sol mouillé', aide: "humidité du sol en surface (0-7 cm, ECMWF), en % de l'eau que ce sol retient normalement : au-delà de 100 % il est gorgé d'eau", pal: 'sol', dec: 0, ecart: 10, horaire: 12 }] : []),
 ];
 const etat = { nPluie: 10, jour: 0, variable: 0, modele: 0, heure: 13 };
 try { Object.assign(etat, JSON.parse(localStorage.getItem('meteoVTT') || '{}')); } catch (e) {}
@@ -391,9 +398,16 @@ function valeurCellule(pt) {
 }
 // ------------------------------------------------------------------ « Où rouler ? » : classement relatif
 const POIDS = { boue: 40, pluie: 35, vent: 25 };
+const AFFICHAGE = { transparence: 35, ecran: false };
+try { Object.assign(AFFICHAGE, JSON.parse(localStorage.getItem('meteoVTTaffichage') || '{}')); } catch (e) {}
+function sauverAffichage() { try { localStorage.setItem('meteoVTTaffichage', JSON.stringify(AFFICHAGE)); } catch (e) {} }
+const opaciteCouleurs = () => 1 - AFFICHAGE.transparence / 100;
+let limitesEcran = null;   // zone affichée au moment du classement « à l'écran »
+function dansEcran(p) { return !AFFICHAGE.ecran || !limitesEcran || limitesEcran.contains([p[0], p[1]]); }
+const refClassement = () => AFFICHAGE.ecran ? 'de la zone affichée' : ZONE.actif && ZONE.durees ? 'de ta zone' : 'de la France';
 const SORTIE = { debut: 8, fin: 18 };   // tranche horaire de la sortie, réglable
 try { Object.assign(SORTIE, JSON.parse(localStorage.getItem('meteoVTTsortie') || '{}')); } catch (e) {}
-try { Object.assign(POIDS, JSON.parse(localStorage.getItem('meteoVTTpoids') || '{}')); } catch (e) {}
+try { Object.assign(POIDS, JSON.parse(localStorage.getItem('meteoVTTpoids') || '{}')); delete POIDS.sol; } catch (e) {}
 const iECMWF = F ? Math.max(0, F.modeles.indexOf('ECMWF')) : 0;
 const isoVersCompact = s => s.replace(/-/g, '');
 const jourNum = s => { const c = isoVersCompact(s); return Date.UTC(+c.slice(0, 4), +c.slice(4, 6) - 1, +c.slice(6, 8)) / 864e5; };
@@ -437,6 +451,19 @@ function criteresOu(n) {
     }
     if (v !== null && v !== undefined) { boue += w * v; detail.push([x, v, src]); }
   }
+  // avec l'évapotranspiration : un « seau » qui se remplit de pluie et se vide en séchant (soleil, vent, chaleur)
+  const sol = solDe(pt), kSec = vitesseSechage(sol);
+  let seau = null;
+  if (pt[11] && detail.length) {
+    seau = 0;
+    for (const d of detail.slice().reverse()) {   // du plus ancien au plus récent
+      const e = et0Jour(pt, d[0]);
+      d[3] = e === null ? null : e * kSec;
+      seau = Math.max(0, seau + d[1] - (d[3] || 0));
+      d[4] = seau;
+    }
+  }
+  if (seau !== null) boue = seau;
   // le jour de la sortie : chaque valeur horaire « h » = pluie tombée de h-1 à h
   const { debut, fin } = SORTIE, base = etat.jour * 24;
   const serie = (k) => serieHoraire(pt, k, m) || null;
@@ -456,7 +483,11 @@ function criteresOu(n) {
   const j = pt[2][etat.jour] && pt[2][etat.jour][m];
   if (pluie === null && !sP && j) pluie = j[0];
   if (vent === null && !sV && j) { vent = j[2]; raf = j[3]; }
-  return { boue, pluie, vent, raf, ventIdx: (vent === null || raf === null) ? null : vent + 0.5 * raf, detail, avantDepart };
+  // humidité du sol au départ × caractère collant du sol
+  let solHum = null, solIdx = null;
+  const sh = pt[12] && pt[12][m];
+  if (sh) { solHum = sh[base + debut]; if (solHum !== null && solHum !== undefined) solIdx = solHum * collant(sol); else solHum = null; }
+  return { boue, boueIdx: boue * collant(sol), pluie, vent, raf, ventIdx: (vent === null || raf === null) ? null : vent + 0.5 * raf, detail, avantDepart, seau, kSec, sol, solHum, solIdx };
 }
 // rang relatif pondéré : part de la surface qui fait mieux (0 = le meilleur, 1 = le pire), ex aequo moyennés
 function rangsPonderes(valeurs, poids) {
@@ -599,7 +630,7 @@ function calculerOu() {
   const vide = { boue: null, pluie: null, ventIdx: null, detail: [] };
   // un point fin sans valeur ce jour-là (jour sans Météo-France) est exclu ; un point normal couvert par la grille fine aussi
   const crit = F.points.map((p, n) => {
-    if (!dansZone(n)) return vide;
+    if (!dansZone(n) || !dansEcran(p)) return vide;
     if (p.fin && !(p[2][etat.jour] && p[2][etat.jour][modeleDuJour(etat.jour)])) return vide;
     return criteresOu(n);
   });
@@ -607,12 +638,15 @@ function calculerOu() {
   // (un point normal couvert par la grille fine reçoit un rang mais ne pèse rien : il ne sert qu'à boucher les trous de l'image)
   const poids = F.points.map((p, n) => p.fin ? 1 : couvert(n) ? 0 : (Gf ? 9 : 1));
   const rangs = (vals) => rangsPonderes(vals, poids);
-  const rb = rangs(crit.map(c => c.boue)), rp = rangs(crit.map(c => c.pluie)), rv = rangs(crit.map(c => c.ventIdx));
+  const rb0 = rangs(crit.map(c => c.boueIdx === undefined ? c.boue : c.boueIdx)), rp = rangs(crit.map(c => c.pluie)), rv = rangs(crit.map(c => c.ventIdx));
+  // boue = moitié « pluie passée − séchage », moitié « humidité du sol du modèle », les deux × caractère collant du sol
+  const rs = AVEC_SOL ? rangs(crit.map(c => c.solIdx === undefined ? null : c.solIdx)) : crit.map(() => null);
+  const rb = rb0.map((r, i) => r === null ? null : rs[i] === null ? r : (r + rs[i]) / 2);
   const W = POIDS.boue + POIDS.pluie + POIDS.vent || 1;
   const comb = crit.map((c, i) => (rb[i] === null || rp[i] === null || rv[i] === null) ? null :
     (POIDS.boue * rb[i] + POIDS.pluie * rp[i] + POIDS.vent * rv[i]) / W);
   const rf = rangs(comb);
-  ou = { score: rf.map(r => r === null ? null : Math.round(100 * (1 - r))), crit, rb, rp, rv };
+  ou = { score: rf.map(r => r === null ? null : Math.round(100 * (1 - r))), crit, rb, rb0, rp, rv, rs };
 }
 
 // index des grilles régulières (normale ≈ 28 km, fine ≈ 9 km)
@@ -694,7 +728,7 @@ function dessinerGrille() {
     const g = pt.fin ? Gf : G, ij = g && g.pos.get(n);
     if (ij) g.vals[ij[0] * g.nj + ij[1]] = val;
   });
-  if (v.special) calculerOu();   // après le remplissage, pour savoir quels points sont couverts par la grille fine
+  if (v.special) { limitesEcran = carte.getBounds().pad(0.08); calculerOu(); }   // après le remplissage, pour savoir quels points sont couverts par la grille fine
   if (v.special) F.points.forEach((pt, n) => {   // le classement remplace les valeurs
     const g = pt.fin ? Gf : G, ij = g && g.pos.get(n); if (!ij) return;
     const sc = ou.score[n]; g.vals[ij[0] * g.nj + ij[1]] = sc === null ? NaN : sc;
@@ -727,7 +761,7 @@ function dessinerGrille() {
       }
     }
     ctx.putImageData(img, 0, 0);
-    coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: 0.66, interactive: false }));
+    coucheGrille.addLayer(L.imageOverlay(cv.toDataURL(), [[sud, ouest], [nord, est]], { opacity: opaciteCouleurs(), interactive: false }));
   };
   if (G) image(G, 8, !!Gf);
   if (Gf) image(Gf, 6, false);
@@ -760,8 +794,8 @@ carte.on('mousemove', e => {
   if ((t && t.closest && t.closest('.leaflet-popup')) || !F || mSel() < 0 || isNaN(val) || w < 0.3) { el.style.display = 'none'; return; }
   const v = varCourante();
   const ecart = false;
-  const unite = { pluie: ' mm', vent: ' km/h', soleil: ' h', temp: ' °C' }[v.pal];
-  el.textContent = v.special ? `mieux que ${Math.round(val)} % ${ZONE.actif && ZONE.durees ? 'de ta zone' : 'de la France'}` : (ecart ? 'écart ' : '') + fmt(val, ecart ? 1 : v.dec) + unite;
+  const unite = { pluie: ' mm', vent: ' km/h', soleil: ' h', temp: ' °C', sol: ' %' }[v.pal];
+  el.textContent = v.special ? `mieux que ${Math.round(val)} % ${refClassement()}` : (ecart ? 'écart ' : '') + fmt(val, ecart ? 1 : v.dec) + unite;
   el.style.left = (e.containerPoint.x + 14) + 'px'; el.style.top = (e.containerPoint.y - 10) + 'px';
   el.style.display = 'block';
 });
@@ -832,12 +866,52 @@ function blocCumuls(s) {
     return `<div>${n} j : <b>${fmt(c.somme, 1)}</b> mm${c.manque ? ` <span class="petit">(${c.manque} j manquant${c.manque > 1 ? 's' : ''})</span>` : ''}</div>`;
   }).join('') + `</div>`;
 }
+// ------------------------------------------------------------------ nature du sol (SoilGrids) et humidité du sol (ECMWF)
+const borne = (x, a, b) => Math.max(a, Math.min(b, x));
+function solDe(p) { return p[9] || (p.fin && p.__c >= 0 ? F.points[p.__c][9] : null); }
+// [argile %, sable %, cailloux %, capacité au champ %]
+function collant(s) {   // l'argile colle et glisse, les cailloux et le sable drainent
+  if (!s) return 1;
+  const [a, sa, c] = s;
+  return borne(0.55 + a / 45, 0.5, 1.6) * (1 - 0.5 * Math.min(1, c / 50)) * (sa > 60 ? 1 - (sa - 60) / 80 : 1);
+}
+function vitesseSechage(s) {   // part de l'évapotranspiration qui assèche vraiment la surface
+  if (!s) return 1;
+  const [a, sa, c] = s;
+  return borne(1.25 - 0.7 * Math.min(1, a / 45) + 0.3 * Math.max(0, (sa - 40) / 50) + 0.3 * Math.min(1, c / 40), 0.45, 1.6);
+}
+function nomSol(s) {
+  if (!s) return 'inconnu';
+  const [a, sa, c] = s;
+  const t = a >= 35 ? 'argileux' : sa >= 60 ? 'sableux' : a >= 25 ? 'limono-argileux' : sa >= 45 ? 'sablo-limoneux' : 'limoneux';
+  return t + (c >= 25 ? ', caillouteux' : '');
+}
+const AVEC_SOL = !!(F && F.points.some(p => p[10]));
+if (F) F.points.forEach(p => {   // [12] : humidité en % de la capacité au champ, heure par heure
+  const s = solDe(p), src = p[10] ? p : (p.fin && p.__c >= 0 ? F.points[p.__c] : null);
+  const h = src && src[10] && src[10][iECMWF];
+  if (!s || !s[3] || !h) return;
+  const serie = h.map(v => v === null || v === undefined ? null : Math.round(v * 1e4 / s[3]));
+  p[12] = F.modeles.map(() => serie);
+});
+// évapotranspiration du jour x (mm), à défaut la moyenne connue du point
+function et0Jour(pt, x) {
+  if (!pt[11]) return null;
+  const liste = (F.jours_passes || []).concat(F.jours);
+  const k = liste.findIndex(j => jourNum(j) === x);
+  const kf = k - (F.jours_passes || []).length;
+  const ordre = kf >= 0 ? [modeleDuJour(kf), iMF, iECMWF] : [iMF, iECMWF];
+  for (const m of ordre) if (m >= 0 && pt[11][m] && k >= 0 && pt[11][m][k] !== null && pt[11][m][k] !== undefined) return pt[11][m][k];
+  let t = 0, n = 0;
+  pt[11].forEach(a => a && a.forEach(v => { if (v !== null && v !== undefined) { t += v; n++; } }));
+  return n ? t / n : null;
+}
 // petit graphique en bâtons de la pluie avant la sortie (pour « Où rouler ? »)
 const COUL_SOURCE = { 'mesurée': '#a06a2c', 'modèle': '#8f99a3', 'prévue': '#4f74f0' };
 function histoBoue(c, jourSortie) {
-  const jours = c.detail.slice().reverse().map(([x, v, src]) => {
+  const jours = c.detail.slice().reverse().map(([x, v, src, sec]) => {
     const d = new Date(x * 864e5), a = Math.round(jourNum(F.jours[etat.jour]) - x);
-    return { lab: JOURS_SEM[d.getUTCDay()].replace('.', ''), num: d.getUTCDate(), v, src, poids: Math.pow(0.5, (a - 1) / 3) };
+    return { lab: JOURS_SEM[d.getUTCDay()].replace('.', ''), num: d.getUTCDate(), v, src, sec, poids: c.seau !== null ? 1 : Math.pow(0.5, (a - 1) / 3) };
   });
   if (c.avantDepart !== null && c.avantDepart !== undefined)
     jours.push({ lab: 'matin', num: '0–' + SORTIE.debut + 'h', v: c.avantDepart, src: 'prévue', poids: 1 });
@@ -849,9 +923,12 @@ function histoBoue(c, jourSortie) {
   return `<div class="hb-titre">Pluie avant ta sortie du ${fmtJour(jourSortie, true)} (mm)</div>
     <div class="hb">${jours.map(col).join('')}</div>
     <div class="hb hb-bas">${jours.map(j => `<div class="hb-jour">${j.lab}<br>${j.num}</div>`).join('')}</div>
+    ${c.seau !== null ? `<div class="hb hb-bas">${jours.map(j => `<div class="hb-jour" style="color:#c07a12" title="séchage estimé">${j.sec === null || j.sec === undefined ? '' : '−' + fmt(j.sec, 1)}</div>`).join('')}</div>` : ''}
     <div class="hb-leg">${Object.entries(COUL_SOURCE).map(([k, v]) => `<span><i style="background:${v}"></i>${k}</span>`).join('')}</div>
     <div class="petit"><b>Total : ${fmt(jours.reduce((t, j) => t + (j.v || 0), 0), 1)} mm</b> (${c.detail.length} jours${c.avantDepart !== null && c.avantDepart !== undefined ? ' + le matin de la sortie' : ''}).
-      Plus le bâton est pâle, moins le jour compte dans le classement (le poids est divisé par 2 tous les 3 jours).</div>`;
+      ${c.seau !== null
+        ? `En orange : ce que le sol a pu sécher chaque jour (évapotranspiration, qui dépend du soleil, du vent, de la chaleur et de l'humidité de l'air, × ${fmt(c.kSec, 2)} pour un sol ${nomSol(c.sol)}). <b>Eau restante estimée au départ : ${fmt(c.boue, 1)} mm.</b>`
+        : `Plus le bâton est pâle, moins le jour compte dans le classement (le poids est divisé par 2 tous les 3 jours).`}</div>`;
 }
 function ouvrirStation(s, ll) {
   const fin = dCompact(P.jours[iFinComplet]);
@@ -879,10 +956,12 @@ carte.on('click', e => {
       if (varCourante().special && ou) {
         const n = pt.__i, c = ou.crit[n], pc = r => r === null ? '—' : Math.round(100 * (1 - r)) + ' %';
         const zoneTxt = ZONE.actif && ZONE.durees ? (ZONE.durees[n] !== null ? ` · ${Math.floor(ZONE.durees[n] / 3600)} h ${String(Math.round(ZONE.durees[n] / 60) % 60).padStart(2, '0')} de ${ZONE.nom}${ZONE.approx ? ' (estimé)' : ''}` : '') : '';
-        const ref = ZONE.actif && ZONE.durees ? 'de ta zone' : 'de la France';
+        const ref = refClassement();
         html += `<h3>Où rouler ? ${fmtJour(dIso(F.jours[etat.jour]), true)} : mieux que ${ou.score[n] ?? '—'} % ${ref}${zoneTxt}</h3>` +
           `<table><tr><th>Critère</th><th>Valeur ici</th><th>Mieux que</th></tr>` +
-          `<tr><td>Boue (pluie passée pondérée)</td><td>${fmt(c.boue, 1)} mm</td><td>${pc(ou.rb[n])}</td></tr>` +
+          `<tr><td><b>Boue</b>${AVEC_SOL ? ` <span class="petit">sol ${nomSol(c.sol)}${c.sol ? ` : argile ${Math.round(c.sol[0])} %, sable ${Math.round(c.sol[1])} %, cailloux ${Math.round(c.sol[2])} %` : ''}</span>` : ''}</td><td></td><td><b>${pc(ou.rb[n])}</b></td></tr>` +
+          `<tr><td style="padding-left:14px">${c.seau !== null ? 'pluie passée − séchage' : 'pluie passée pondérée'}</td><td>${fmt(c.boue, 1)} mm</td><td>${pc(ou.rb0[n])}</td></tr>` +
+          (AVEC_SOL ? `<tr><td style="padding-left:14px">humidité du sol au départ (modèle)</td><td>${c.solHum === null ? '—' : Math.round(c.solHum) + ' %'}</td><td>${pc(ou.rs[n])}</td></tr>` : '') +
           `<tr><td>Pluie de ${SORTIE.debut} h à ${SORTIE.fin} h</td><td>${fmt(c.pluie, 1)} mm</td><td>${pc(ou.rp[n])}</td></tr>` +
           `<tr><td>Vent / rafales max (${SORTIE.debut} h – ${SORTIE.fin} h)</td><td>${fmt(c.vent)} / ${fmt(c.raf)} km/h</td><td>${pc(ou.rv[n])}</td></tr></table>` +
           histoBoue(c, dIso(F.jours[etat.jour])) + `<br>`;
@@ -914,6 +993,7 @@ carte.on('click', e => {
         html += ligne('Vent', serieHoraire(pt, 4, mj), PAL.vent, 0, serieHoraire(pt, 6, mj));
         html += ligne('Rafales', serieHoraire(pt, 5, mj), PAL.vent, 0);
         if (pt[8] || (pt.fin && pt.__c >= 0 && F.points[pt.__c][8])) html += ligne('Temp. °C', serieHoraire(pt, 8, mj), PAL.temp, 0);
+        if (pt[12]) html += ligne('Sol mouillé %', pt[12][mj], PAL.sol, 0);
         html += `</table><div class="petit">Pluie en mm tombés dans l'heure qui précède (13h = de 12 h à 13 h). Vent et rafales en km/h, la petite flèche montre où va le vent. Température en °C. Jour choisi dans la barre du bas.</div>`;
       }
     }
@@ -1032,17 +1112,18 @@ function majPanneau() {
     if (v.id === 5) note = `<b>Température</b> prévue à ${hTxt}, ${fmtJour(dj, true)}, modèle ${nomModele()}.`;
     if (v.id === 2 || v.id === 3) note = `<b>${v.nom}</b> à ${hTxt}, ${fmtJour(dj, true)}` +
       (mSel() < F.modeles.length ? `, modèle ${nomModele()}. Les flèches montrent où va le vent.` : ` : différence entre les deux modèles.`);
-    if (v.special) note = `<b>Où rouler ?</b> ${fmtJour(dj, true)} : classement <b>relatif</b> ${ZONE.actif && ZONE.durees ? 'des endroits à moins de ' + Math.floor(ZONE.minutes / 60) + ' h ' + String(ZONE.minutes % 60).padStart(2, '0') + ' de ' + ZONE.nom : 'de toute la France'} pour ce jour, modèle ${nomModele()}. ` +
+    if (v.special) note = `<b>Où rouler ?</b> ${fmtJour(dj, true)} : classement <b>relatif</b> ${AFFICHAGE.ecran ? 'de la partie de la carte affichée' + (ZONE.actif && ZONE.durees ? ' (dans ta zone)' : '') : ZONE.actif && ZONE.durees ? 'des endroits à moins de ' + Math.floor(ZONE.minutes / 60) + ' h ' + String(ZONE.minutes % 60).padStart(2, '0') + ' de ' + ZONE.nom : 'de toute la France'} pour ce jour, modèle ${nomModele()}. ` +
       `<span style="color:#1b7837;font-weight:600">Vert</span> = parmi les meilleurs endroits, <span style="color:#b2182b;font-weight:600">rouge</span> = parmi les pires. ` +
-      `Combine la boue (pluie des 10 jours précédents, les plus récents comptent plus, + la pluie depuis minuit jusqu'au départ), la pluie pendant ta sortie (${SORTIE.debut} h – ${SORTIE.fin} h) et le vent/rafales sur la même tranche. ` +
+      (AVEC_SOL ? `Combine la boue (pluie des 10 jours moins ce que le sol a séché, et humidité du sol du modèle au départ, les deux selon le type de sol : l'argile colle, le sable et les cailloux drainent), `
+        : `Combine la boue (pluie des 10 jours précédents, les plus récents comptent plus, + la pluie depuis minuit jusqu'au départ), `) + `la pluie pendant ta sortie (${SORTIE.debut} h – ${SORTIE.fin} h) et le vent/rafales sur la même tranche. ` +
       `Vert ne veut pas dire bon : si toute la France est arrosée, le vert est seulement le moins pire.`;
     if (v.horaire) note += ` Choisis l'heure avec le curseur au-dessus des jours, les flèches du clavier ou le bouton lecture.`;
-    if (v.horaire && !F.points[0][v.horaire]) note += ` <b>Relance « Mettre a jour la carte » pour avoir les données heure par heure.</b>`;
+    if (v.horaire && !F.points.some(p => p[v.horaire])) note += ` <b>Relance « Mettre a jour la carte » pour avoir les données heure par heure.</b>`;
     const nVide = F.points.filter(p => valeurCellule(p) === null || valeurCellule(p) === undefined).length;
     if (!v.special && nVide > F.points.length / 2) note += ` <b>Ce modèle ne couvre pas ce jour (pas de valeur).</b>`;
     document.getElementById('notePrev').innerHTML = note;
     const pal = (v.special || mSel() < F.modeles.length) ? PAL[v.pal] : PAL.ecart;
-    const unite = { pluie: 'mm', vent: 'km/h', soleil: 'h', temp: '°C', ou: '% de la France battus' }[v.pal];
+    const unite = { pluie: 'mm', vent: 'km/h', soleil: 'h', temp: '°C', sol: '% de la capacité du sol', ou: '% ' + refClassement() + ' battus' }[v.pal];
     document.getElementById('reglagesOu').style.display = v.special ? 'block' : 'none';
     // légende verticale : dégradé continu, graduations aux paliers
     const N = pal.seuils.length, haut = Math.max(220, N * 17);
@@ -1108,6 +1189,24 @@ function majPanneau() {
       try { localStorage.setItem('meteoVTTpoids', JSON.stringify(POIDS)); } catch (e) {}
       dessinerGrille(); dessinerEtiquettes();
     };
+  });
+})();
+(function () {
+  const t = document.getElementById('transparence'), vt = document.getElementById('vTransparence');
+  t.value = AFFICHAGE.transparence; vt.textContent = AFFICHAGE.transparence + ' %';
+  t.oninput = () => {
+    AFFICHAGE.transparence = +t.value; vt.textContent = t.value + ' %'; sauverAffichage();
+    coucheGrille.eachLayer(l => l.setOpacity && l.setOpacity(opaciteCouleurs()));
+  };
+  const e = document.getElementById('ecranActif');
+  e.checked = AFFICHAGE.ecran;
+  e.onchange = () => { AFFICHAGE.ecran = e.checked; sauverAffichage(); dessinerGrille(); dessinerEtiquettes(); majPanneau(); };
+  // en mode « à l'écran », le classement suit les déplacements de la carte
+  let attente = null;
+  carte.on('moveend', () => {
+    if (!AFFICHAGE.ecran || !varCourante().special) return;
+    clearTimeout(attente);
+    attente = setTimeout(() => { dessinerGrille(); dessinerEtiquettes(); }, 250);
   });
 })();
 function maj() { dessinerDepart(); dessinerGrille(); dessinerEtiquettes(); dessinerFleches(); majPanneau(); }
